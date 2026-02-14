@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const config = require('../config');
 
 const logSchema = new mongoose.Schema({
   timestamp: {
@@ -77,8 +78,8 @@ logSchema.index({ archived: 1, timestamp: 1 });
 
 // TTL index - auto-delete logs older than retention period
 // This will be set dynamically based on config
-logSchema.index({ timestamp: 1 }, { 
-  expireAfterSeconds: 60 * 60 * 24 * 7 // 7 days default
+logSchema.index({ timestamp: 1 }, {
+  expireAfterSeconds: 60 * 60 * 24 * (config.retention.hotStorageDays || 7)
 });
 
 const Log = mongoose.model('Log', logSchema);

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Log = require('../models/Log');
+const config = require('../config');
 const authenticate = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 const { validateLogBatch } = require('../middleware/validation');
@@ -74,6 +75,10 @@ router.get('/', authenticate, async (req, res) => {
       query.timestamp = {};
       if (from) query.timestamp.$gte = new Date(from);
       if (to) query.timestamp.$lte = new Date(to);
+    } else {
+      query.timestamp = {
+        $gte: new Date(Date.now() - config.retention.hotStorageDays * 24 * 60 * 60 * 1000)
+      };
     }
     
     // Execute query
