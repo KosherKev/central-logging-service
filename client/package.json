@@ -1,0 +1,17 @@
+{
+  "name": "@your-org/log-shipper",
+  "version": "1.0.0",
+  "description": "Client library for shipping logs to Central Logging Service",
+  "main": "log-shipper.js",
+  "keywords": [
+    "logging",
+    "client",
+    "centralized-logging"
+  ],
+  "author": "Techknowslogic",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^2.7.0",
+    "uuid": "^9.0.1"
+  }
+}
