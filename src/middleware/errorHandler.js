@@ -1,5 +1,12 @@
+const logger = require('../utils/logger');
+
 const errorHandler = (err, req, res, next) => {
-  console.error('Error:', err);
+  logger.error('Unhandled error', {
+    error: {
+      message: err.message,
+      stack: err.stack
+    }
+  });
   
   // Mongoose validation error
   if (err.name === 'ValidationError') {
