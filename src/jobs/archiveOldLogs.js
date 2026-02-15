@@ -1,5 +1,6 @@
 const Log = require('../models/Log');
 const config = require('../config');
+const logger = require('../utils/logger');
 
 /**
  * Purge old logs from MongoDB
@@ -7,22 +8,27 @@ const config = require('../config');
  */
 async function archiveOldLogs() {
   try {
-    console.log('🔄 Starting log purge process...');
+    logger.info('Starting log purge process');
     
     // Calculate cutoff date
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - config.retention.hotStorageDays);
     
-    console.log(`📅 Deleting logs older than ${cutoffDate.toISOString()}`);
+    logger.info(`Deleting logs older than ${cutoffDate.toISOString()}`);
     
     const deleteResult = await Log.deleteMany({
       timestamp: { $lt: cutoffDate }
     });
-    console.log(`🗑️  Deleted ${deleteResult.deletedCount} logs from MongoDB`);
-    console.log('✅ Log purge process completed successfully');
+    logger.info(`Deleted ${deleteResult.deletedCount} logs from MongoDB`);
+    logger.info('Log purge process completed successfully');
     
   } catch (error) {
-    console.error('❌ Error during log purge:', error);
+    logger.error('Error during log purge', {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    });
     throw error;
   }
 }
@@ -37,7 +43,12 @@ if (require.main === module) {
       await archiveOldLogs();
       process.exit(0);
     } catch (error) {
-      console.error('Failed to run archive job:', error);
+      logger.error('Failed to run archive job', {
+        error: {
+          message: error.message,
+          stack: error.stack
+        }
+      });
       process.exit(1);
     }
   })();

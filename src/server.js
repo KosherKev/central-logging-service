@@ -7,6 +7,7 @@ const connectDB = require('./config/database');
 const errorHandler = require('./middleware/errorHandler');
 const logsRoutes = require('./routes/logs');
 const healthRoutes = require('./routes/health');
+const logger = require('./utils/logger');
 
 const app = express();
 
@@ -64,24 +65,22 @@ app.use(errorHandler);
 // Start server
 const PORT = config.port;
 app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════════════╗
-║   🚀 Central Logging Service                   ║
-║   📡 Server running on port ${PORT}              ║
-║   🌍 Environment: ${config.nodeEnv.padEnd(27)}║
-║   📊 MongoDB: Connected                        ║
-╚════════════════════════════════════════════════╝
-  `);
+  logger.info('Central Logging Service started', {
+    metadata: {
+      port: PORT,
+      environment: config.nodeEnv
+    }
+  });
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Shutting down gracefully...');
+  logger.info('SIGTERM received. Shutting down gracefully...');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT received. Shutting down gracefully...');
+  logger.info('SIGINT received. Shutting down gracefully...');
   process.exit(0);
 });
 

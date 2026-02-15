@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Log = require('../models/Log');
 const config = require('../config');
+const logger = require('../utils/logger');
 const authenticate = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 const { validateLogBatch } = require('../middleware/validation');
@@ -24,7 +25,12 @@ router.post('/', authenticate, rateLimit, validateLogBatch, async (req, res) => 
       count: insertedLogs.length
     });
   } catch (error) {
-    console.error('Error storing logs:', error);
+    logger.error('Error storing logs', {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    });
     
     // Handle partial success in case of duplicate keys
     if (error.code === 11000) {
@@ -101,7 +107,12 @@ router.get('/', authenticate, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error querying logs:', error);
+    logger.error('Error querying logs', {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to query logs'
@@ -135,7 +146,12 @@ router.get('/:traceId', authenticate, async (req, res) => {
       count: logs.length
     });
   } catch (error) {
-    console.error('Error fetching logs by trace ID:', error);
+    logger.error('Error fetching logs by trace ID', {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to fetch logs'
@@ -226,7 +242,12 @@ router.get('/stats/summary', authenticate, async (req, res) => {
     
     res.json(response);
   } catch (error) {
-    console.error('Error calculating stats:', error);
+    logger.error('Error calculating stats', {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    });
     res.status(500).json({
       success: false,
       error: 'Failed to calculate statistics'
