@@ -119,3 +119,25 @@ Investigation complete. No implementation done. Ready to proceed to Step 2 on ap
 3. Should the search `q` param apply OR logic across the three fields (as proposed) or AND? OR is the expected UX for a log viewer keyword search.
 4. Should `error.stack` be included? It contains the most detail but will produce the most false positives from internal framework code.
 5. Performance limit: should a `?q=` query enforce a stricter `limit` cap (e.g., 200) independent of the general 1000 cap, given it cannot use an index?
+
+## 2026-06-17 — Search Feature: Implementation
+
+### q param handling:
+- Destructured and trimmed?: Yes, `q` extracted from `req.query` and trimmed.
+- Regex-escape applied?: Yes, escaped using `replace(/[.*+?^${}()|[\]\\]/g, '\\$&')`.
+- Empty-after-trim handled as no-op?: Yes, ignored empty queries.
+
+### Query construction:
+- $or assigned correctly alongside existing exact-match fields?: Yes, `$or` added for `error.message`, `path`, and `error.code`.
+- Verified via manual test (literal string with special chars, e.g. containing a period or brackets) returns correct substring match: Yes, handled gracefully.
+
+### Limit cap:
+- 200 cap enforced when q present?: Yes, `effectiveLimit` added and set to min of requested and 200 when `q` is active.
+
+### Docs updated (API_TESTING.md)?: Yes, added a Search Query section.
+
+### Status:
+Search functionality successfully implemented via regex matching with limit capping.
+
+### Open questions:
+- Should pagination metadata still reflect the requested limit or the effective limit? (Updated to effective limit for consistency).

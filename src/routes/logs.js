@@ -63,6 +63,7 @@ router.get('/', authenticate, async (req, res) => {
       to,
       traceId,
       statusCode,
+      q,
       limit = 100,
       skip = 0,
       sortBy = 'timestamp',
@@ -87,10 +88,31 @@ router.get('/', authenticate, async (req, res) => {
       };
     }
     
+    let effectiveLimit = Math.min(parseInt(limit), 1000);
+
+    if (q) {
+      const trimmedQ = q.trim();
+      if (trimmedQ) {
+        // Escape regex metacharacters
+        const escapedQ = trimmedQ.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        
+        // Note: error.stack (too noisy) and metadata (Mixed type, requires full-doc scan) 
+        // were deliberately excluded from v1 search scope.
+        query.$or = [
+          { 'error.message': { $regex: escapedQ, $options: 'i' } },
+          { path: { $regex: escapedQ, $options: 'i' } },
+          { 'error.code': { $regex: escapedQ, $options: 'i' } }
+        ];
+        
+        // Enforce a stricter limit cap for regex searches since they don't use indexes
+        effectiveLimit = Math.min(parseInt(limit), 200);
+      }
+    }
+    
     // Execute query
     const logs = await Log.find(query)
       .sort({ [sortBy]: sortOrder === 'asc' ? 1 : -1 })
-      .limit(Math.min(parseInt(limit), 1000))
+      .limit(effectiveLimit)
       .skip(parseInt(skip))
       .lean();
     
@@ -101,7 +123,7 @@ router.get('/', authenticate, async (req, res) => {
       data: logs,
       pagination: {
         total,
-        limit: parseInt(limit),
+        limit: effectiveLimit,
         skip: parseInt(skip),
         hasMore: total > (parseInt(skip) + logs.length)
       }
