@@ -149,6 +149,12 @@ curl "http://localhost:8080/api/v1/logs?service=user-api&level=error&from=2026-0
   -H "X-API-Key: dev-key-123"
 ```
 
+### Search Query (Regex)
+```bash
+curl "http://localhost:8080/api/v1/logs?q=ECONNREFUSED&limit=50" \
+  -H "X-API-Key: dev-key-123"
+```
+
 ### Response
 ```json
 {
