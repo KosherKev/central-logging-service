@@ -141,3 +141,46 @@ Search functionality successfully implemented via regex matching with limit capp
 
 ### Open questions:
 - Should pagination metadata still reflect the requested limit or the effective limit? (Updated to effective limit for consistency).
+
+---
+
+## 2026-07-20 — PR-22: Metrics collector route for `@bevingh/telemetry`
+
+### What was built
+
+Receiving side for `@bevingh/telemetry` (package lives in bevin-core / GitHub Packages). No changes to the telemetry package itself and **no AcademicX (or any app) wiring** — that is a separate, not-yet-started session.
+
+| Surface | Detail |
+|---|---|
+| `POST /api/v1/metrics/health` | Health pings: `appId`, `status: "ok"`, `timestamp`, `instanceId`, optional `uptimeSeconds` |
+| `POST /api/v1/metrics` | Free-form metrics: `appId`, `timestamp`, `instanceId`, `metrics` (object, **not** schema-constrained beyond type) |
+| Auth | New `src/middleware/metricsAuth.js` — `@bevingh/auth` `matchApiKey` via dynamic `import()` + `bcryptjs.compare`. Flat-key `auth.js` for `/logs` **untouched**. |
+| Scoping | After auth, routes 403 if `req.body.appId !== req.telemetryAppId` (leaked AcademicX key cannot post as another app). |
+| Models | `ApiKeyCandidate` (subjectId + testHash/liveHash), `Metric` (kind health\|metric, TTL via `HOT_STORAGE_DAYS`) |
+| Key CLI | `npm run generate-app-key -- <appId> [--test]` → `src/utils/generateAppApiKey.js` (prints raw `sk_live_`/`sk_test_` once, stores bcrypt hash only) |
+| Docker | BuildKit secret mount for GitHub Packages token in `Dockerfile` + `scripts/deploy.sh` |
+| Tests | `tests/metricsAuth.test.js` — valid key, missing, invalid, wrong-app mismatch (no prior test suite in repo; jest was already a dep) |
+
+### Manual follow-up (per app)
+
+For each app that will emit telemetry (e.g. AcademicX later):
+
+```bash
+# MongoDB must be reachable (MONGODB_URI)
+npm run generate-app-key -- academicx
+# Copy the printed sk_live_… key into that app's @bevingh/telemetry client config.
+# Raw key is never stored in this service.
+```
+
+### Registry / token notes
+
+- Committed `.npmrc` only sets `@bevingh:registry=https://npm.pkg.github.com` (no token).
+- Local install uses user `~/.npmrc` auth. `npm whoami --registry=https://npm.pkg.github.com` verified as **KosherKev** before install.
+- Docker / deploy expects a token file at `.secrets/npm_token` (gitignored). Prefer a **read:packages-only** classic PAT — never a publish-scoped token. The machine's existing Packages credential had broader scopes (`write:packages`, `repo`); rotate to a dedicated read-only PAT for this repo when convenient.
+- Installed: `@bevingh/auth@^0.1.0` (pulls `@bevingh/errors`), `bcryptjs@^3` (pure JS).
+
+### Explicitly out of scope / not started
+
+- `@bevingh/telemetry` source (bevin-core)
+- AcademicX / academicx-api client wiring
+- Uptime Kuma infra

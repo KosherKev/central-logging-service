@@ -10,3 +10,6 @@ coverage/
 .vscode/
 .idea/
 *.md
+# Never send GitHub Packages tokens into the build context
+.secrets/
+**/.npmrc.auth

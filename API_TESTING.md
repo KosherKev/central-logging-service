@@ -17,11 +17,23 @@ Production: https://your-service.run.app
 
 ## Authentication
 
-All requests (except health check) require an API key in the header:
+### Logs routes (`/api/v1/logs`)
+
+Flat keys from the `API_KEYS` env var:
 
 ```
 X-API-Key: your-api-key
 ```
+
+### Metrics routes (`/api/v1/metrics`)
+
+Per-app keys (`sk_live_…` / `sk_test_…`) stored as bcrypt hashes in MongoDB (`ApiKeyCandidate`). Generate:
+
+```bash
+npm run generate-app-key -- academicx
+```
+
+Use the printed raw key as `X-API-Key`. The key is bound to one `appId` (`subjectId`); posting a different `appId` returns **403**.
 
 ---
 
@@ -106,6 +118,83 @@ curl -X POST http://localhost:8080/api/v1/logs \
   "success": true,
   "message": "Successfully stored 2 logs",
   "count": 2
+}
+```
+
+---
+
+## 2b. Submit Health Metric (`@bevingh/telemetry`)
+
+### Request
+```bash
+curl -X POST http://localhost:8080/api/v1/metrics/health \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_YOUR_APP_KEY" \
+  -d '{
+    "appId": "academicx",
+    "status": "ok",
+    "timestamp": "2026-07-20T12:00:00.000Z",
+    "instanceId": "rev-abc-1",
+    "uptimeSeconds": 3600
+  }'
+```
+
+### Response
+```json
+{
+  "success": true,
+  "message": "Health report stored"
+}
+```
+
+### Wrong-app mismatch (key for academicx, body claims didipay)
+```bash
+curl -X POST http://localhost:8080/api/v1/metrics/health \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_ACADEMICX_KEY" \
+  -d '{
+    "appId": "didipay",
+    "status": "ok",
+    "timestamp": "2026-07-20T12:00:00.000Z",
+    "instanceId": "rev-abc-1"
+  }'
+```
+
+```json
+{
+  "success": false,
+  "error": "API key is not authorized for this appId."
+}
+```
+
+---
+
+## 2c. Submit Free-form Metrics (`@bevingh/telemetry`)
+
+`metrics` is any JSON object — no fixed shape beyond "is an object".
+
+### Request
+```bash
+curl -X POST http://localhost:8080/api/v1/metrics \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: sk_live_YOUR_APP_KEY" \
+  -d '{
+    "appId": "academicx",
+    "timestamp": "2026-07-20T12:00:00.000Z",
+    "instanceId": "rev-abc-1",
+    "metrics": {
+      "requestCount": 42,
+      "p95LatencyMs": 180,
+      "custom": { "anything": true }
+    }
+  }'
+```
+
+### Response
+```json
+{
+  "success": true,
+  "message": "Metrics report stored"
 }
 ```
 

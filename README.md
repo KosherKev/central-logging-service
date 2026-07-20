@@ -5,10 +5,11 @@ A centralized logging service designed to collect, store, and analyze logs from 
 ## Features
 
 - 📊 **Structured JSON Logging** - Standard log format across all services
+- 📡 **Metrics / Health Ingestion** - `POST /api/v1/metrics` + `/health` for `@bevingh/telemetry` clients
 - 🔥 **Hot & Cold Storage** - MongoDB for recent logs, Google Cloud Storage for archives
 - 🚀 **Batch Processing** - Efficient log ingestion with batching support
 - 🔍 **Advanced Querying** - Filter by service, level, time range, trace ID
-- 🔐 **API Key Authentication** - Secure log submission
+- 🔐 **API Key Authentication** - Flat keys for logs; per-app hashed keys for metrics
 - 📈 **Analytics** - Error rates, performance metrics, aggregations
 - ☁️ **Cloud Run Ready** - Optimized for Google Cloud Run deployment
 
@@ -30,7 +31,17 @@ Your APIs → Batch Logs → Logging Service (Cloud Run)
 
 ### 1. Installation
 
+Private `@bevingh/*` packages resolve from GitHub Packages. This repo's committed `.npmrc` only sets the scope (no token). Put a **read:packages**-only PAT in your user `~/.npmrc`:
+
+```ini
+@bevingh:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=YOUR_READ_PACKAGES_TOKEN
+```
+
+Verify, then install:
+
 ```bash
+npm whoami --registry=https://npm.pkg.github.com
 npm install
 ```
 
@@ -48,7 +59,7 @@ API_KEYS=your-api-key-1,your-api-key-2
 GCS_BUCKET_NAME=your-logging-bucket
 GCS_PROJECT_ID=your-project-id
 
-# Log Retention
+# Log / metrics retention (MongoDB TTL for both logs and metrics collections)
 HOT_STORAGE_DAYS=7
 COLD_STORAGE_DAYS=90
 ```
@@ -105,6 +116,60 @@ Content-Type: application/json
   ]
 }
 ```
+
+### Submit Health Metric (`@bevingh/telemetry`)
+
+**Endpoint:** `POST /api/v1/metrics/health`
+
+Uses **per-app** API keys (`sk_live_` / `sk_test_`), not the flat `API_KEYS` list used by `/api/v1/logs`. Generate one with:
+
+```bash
+# requires MongoDB; prints the raw key once
+npm run generate-app-key -- academicx
+# or test key:
+node src/utils/generateAppApiKey.js academicx --test
+```
+
+**Headers:**
+```
+X-API-Key: sk_live_...
+Content-Type: application/json
+```
+
+**Body:**
+```json
+{
+  "appId": "academicx",
+  "status": "ok",
+  "timestamp": "2026-07-20T12:00:00.000Z",
+  "instanceId": "rev-abc-1",
+  "uptimeSeconds": 3600
+}
+```
+
+The authenticated key's `subjectId` must equal `appId` or the request is rejected with 403.
+
+### Submit Free-form Metrics (`@bevingh/telemetry`)
+
+**Endpoint:** `POST /api/v1/metrics`
+
+**Headers:** same as health (`X-API-Key` per-app key)
+
+**Body:**
+```json
+{
+  "appId": "academicx",
+  "timestamp": "2026-07-20T12:00:00.000Z",
+  "instanceId": "rev-abc-1",
+  "metrics": {
+    "requestCount": 42,
+    "p95LatencyMs": 180,
+    "anyCustomShape": { "nested": true }
+  }
+}
+```
+
+`metrics` is intentionally unconstrained (any object). Schema validation only checks that it is an object.
 
 ### Query Logs
 
@@ -202,9 +267,20 @@ app.use((req, res, next) => {
 
 ### 1. Build Docker Image
 
+`npm ci` needs GitHub Packages at build time. Use a BuildKit secret (never `ARG`/`ENV` for the token). Token file is **never committed** (see `.secrets/` in `.gitignore`).
+
 ```bash
-docker build -t gcr.io/YOUR_PROJECT_ID/central-logging-service .
+mkdir -p .secrets
+# write a read:packages-only PAT (not a publish token)
+printf '%s' "$GITHUB_READ_PACKAGES_TOKEN" > .secrets/npm_token
+chmod 600 .secrets/npm_token
+
+DOCKER_BUILDKIT=1 docker build \
+  --secret id=npm_token,src=.secrets/npm_token \
+  -t gcr.io/YOUR_PROJECT_ID/central-logging-service .
 ```
+
+Or use `./scripts/deploy.sh`, which wires the secret mount the same way.
 
 ### 2. Push to Google Container Registry
 
@@ -242,9 +318,10 @@ Schedule with Cloud Scheduler or cron:
 
 ## Security
 
-- API key authentication for log submission
+- API key authentication for log submission (flat `API_KEYS` env list)
+- Per-app hashed API keys for metrics (`ApiKeyCandidate` + `@bevingh/auth` `matchApiKey`); route rejects `appId` ≠ authenticated subject
 - Rate limiting to prevent abuse
-- Input validation with Joi
+- Input validation with Joi (`metrics` object left free-form by design)
 - Helmet.js security headers
 - CORS configuration
 
