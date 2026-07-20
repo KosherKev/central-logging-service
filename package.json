@@ -6,7 +6,14 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "jest"
+    "test": "node --experimental-vm-modules node_modules/.bin/jest --forceExit",
+    "generate-app-key": "node src/utils/generateAppApiKey.js"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
   },
   "keywords": [
     "logging",
@@ -16,20 +23,23 @@
   "author": "Techknowslogic",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.18.2",
-    "mongoose": "^8.0.3",
-    "dotenv": "^16.3.1",
-    "cors": "^2.8.5",
-    "helmet": "^7.1.0",
-    "compression": "^1.7.4",
+    "@bevingh/auth": "^0.1.0",
     "@google-cloud/storage": "^7.7.0",
-    "uuid": "^9.0.1",
+    "bcryptjs": "^3.0.3",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
     "joi": "^17.11.0",
+    "mongoose": "^8.0.3",
+    "uuid": "^9.0.1",
     "winston": "^3.11.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2",
-    "jest": "^29.7.0"
+    "@types/bcryptjs": "^2.4.6",
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.2"
   },
   "engines": {
     "node": ">=18.0.0"

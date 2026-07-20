@@ -28,6 +28,34 @@ const logEntrySchema = Joi.object({
   metadata: Joi.object().optional()
 });
 
+const healthReportSchema = Joi.object({
+  appId: Joi.string().required(),
+  status: Joi.string().valid('ok').required(),
+  timestamp: Joi.date().iso().required(),
+  instanceId: Joi.string().required(),
+  uptimeSeconds: Joi.number().optional()
+});
+
+// metrics is deliberately an unconstrained object — free-form is a design property
+// of @bevingh/telemetry, not a validation gap
+const metricsReportSchema = Joi.object({
+  appId: Joi.string().required(),
+  timestamp: Joi.date().iso().required(),
+  instanceId: Joi.string().required(),
+  metrics: Joi.object().unknown(true).required()
+});
+
+function validationFailed(res, error) {
+  return res.status(400).json({
+    success: false,
+    error: 'Validation failed',
+    details: error.details.map(d => ({
+      field: d.path.join('.'),
+      message: d.message
+    }))
+  });
+}
+
 const validateLogBatch = (req, res, next) => {
   const schema = Joi.object({
     logs: Joi.array().items(logEntrySchema).min(1).max(1000).required()
@@ -36,21 +64,40 @@ const validateLogBatch = (req, res, next) => {
   const { error, value } = schema.validate(req.body, { abortEarly: false });
   
   if (error) {
-    return res.status(400).json({
-      success: false,
-      error: 'Validation failed',
-      details: error.details.map(d => ({
-        field: d.path.join('.'),
-        message: d.message
-      }))
-    });
+    return validationFailed(res, error);
   }
   
   req.validatedData = value;
   next();
 };
 
+const validateHealthReport = (req, res, next) => {
+  const { error, value } = healthReportSchema.validate(req.body, { abortEarly: false });
+
+  if (error) {
+    return validationFailed(res, error);
+  }
+
+  req.validatedData = value;
+  next();
+};
+
+const validateMetricsReport = (req, res, next) => {
+  const { error, value } = metricsReportSchema.validate(req.body, { abortEarly: false });
+
+  if (error) {
+    return validationFailed(res, error);
+  }
+
+  req.validatedData = value;
+  next();
+};
+
 module.exports = {
   validateLogBatch,
-  logEntrySchema
+  validateHealthReport,
+  validateMetricsReport,
+  logEntrySchema,
+  healthReportSchema,
+  metricsReportSchema
 };

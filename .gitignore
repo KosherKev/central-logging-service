@@ -10,3 +10,8 @@ build/
 service-account-key.json
 .vscode/
 .idea/
+
+# GitHub Packages token for Docker BuildKit / local install — never commit
+.secrets/
+.npmrc.auth
+

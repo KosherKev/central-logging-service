@@ -4,11 +4,17 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files + scoped registry config (no token in the image layers)
 COPY package*.json ./
+COPY .npmrc ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install production deps. Token is a BuildKit secret — never ARG/ENV (leaks into layers).
+# Build with: DOCKER_BUILDKIT=1 docker build --secret id=npm_token,src=.secrets/npm_token ...
+RUN --mount=type=secret,id=npm_token \
+    echo "@bevingh:registry=https://npm.pkg.github.com" > .npmrc && \
+    echo "//npm.pkg.github.com/:_authToken=$(cat /run/secrets/npm_token)" >> .npmrc && \
+    npm ci --only=production && \
+    rm .npmrc
 
 # Copy application code
 COPY . .
