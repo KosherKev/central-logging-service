@@ -362,6 +362,11 @@ curl "http://localhost:8080/api/v1/logs?q=ECONNREFUSED&limit=50" \
       "updatedAt": "2026-02-14T10:30:46.000Z"
     }
   ],
+  "total": 1234,
+  "meta": {
+    "limit": 100,
+    "skip": 0
+  },
   "pagination": {
     "total": 1234,
     "limit": 100,
@@ -370,6 +375,8 @@ curl "http://localhost:8080/api/v1/logs?q=ECONNREFUSED&limit=50" \
   }
 }
 ```
+
+Top-level `total` + `meta` are the preferred LogPulse envelope; `pagination` remains for older clients.
 
 ---
 
@@ -445,9 +452,24 @@ curl "http://localhost:8080/api/v1/logs/stats/summary?service=user-api&from=2026
       "debug": 0
     },
     "byService": {
-      "user-api": 5000,
-      "payment-api": 3000,
-      "order-api": 2000
+      "user-api": {
+        "totalRequests": 5000,
+        "errorCount": 100,
+        "errorRate": 2,
+        "avgDuration": 120.5
+      },
+      "payment-api": {
+        "totalRequests": 3000,
+        "errorCount": 90,
+        "errorRate": 3,
+        "avgDuration": 180.2
+      },
+      "order-api": {
+        "totalRequests": 2000,
+        "errorCount": 60,
+        "errorRate": 3,
+        "avgDuration": 95
+      }
     },
     "byStatusCode": {
       "200": 7000,
@@ -459,6 +481,8 @@ curl "http://localhost:8080/api/v1/logs/stats/summary?service=user-api&from=2026
   }
 }
 ```
+
+`byService` values are objects (`totalRequests`, `errorCount`, `errorRate` 0–100%, `avgDuration` ms). Legacy bare-int maps are no longer emitted.
 
 ---
 

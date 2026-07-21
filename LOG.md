@@ -238,6 +238,25 @@ LogPulse Analytics already expects these surfaces. Server gaps closed so traffic
 - Error groups / services catalog
 - LogPulse client wiring (LP consumers after this lands)
 
+---
+
+## 2026-07-21 — P1 log stats: per-service summary + list total
+
+### What was built
+
+| Surface | Change |
+|---|---|
+| `GET /api/v1/logs/stats/summary` → `byService` | Values are objects: `{ totalRequests, errorCount, errorRate (0–100%), avgDuration (ms) }` via `$group` with error cond + `$avg: '$duration'`. Global fields unchanged. |
+| `GET /api/v1/logs` | Adds top-level `total` + `meta: { limit, skip }` for LogPulse. Keeps existing `pagination` envelope for older clients. |
+
+### Tests
+
+- `tests/logsSummary.test.js` — `formatByServiceStats` (error rate math, zeros, missing service id)
+
+### Still out of scope
+
+- Error groups, services catalog, stage timings
+
 ### Acceptance notes
 
 - Timeseries aggregates the full match window (Mongo `$group` buckets).

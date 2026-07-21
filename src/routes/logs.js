@@ -109,23 +109,31 @@ router.get('/', authenticate, async (req, res) => {
       }
     }
     
+    const skipN = parseInt(skip, 10) || 0;
+
     // Execute query
     const logs = await Log.find(query)
       .sort({ [sortBy]: sortOrder === 'asc' ? 1 : -1 })
       .limit(effectiveLimit)
-      .skip(parseInt(skip))
+      .skip(skipN)
       .lean();
     
     const total = await Log.countDocuments(query);
     
+    // Prefer top-level total + meta for LogPulse; keep pagination for older clients
     res.json({
       success: true,
       data: logs,
+      total,
+      meta: {
+        limit: effectiveLimit,
+        skip: skipN
+      },
       pagination: {
         total,
         limit: effectiveLimit,
-        skip: parseInt(skip),
-        hasMore: total > (parseInt(skip) + logs.length)
+        skip: skipN,
+        hasMore: total > (skipN + logs.length)
       }
     });
   } catch (error) {
@@ -290,6 +298,29 @@ async function fetchLogTimeseries({ start, end, bucketMs, service }) {
 }
 
 /**
+ * Map per-service aggregation rows → LogPulse-friendly objects.
+ * Values are objects with totalRequests/errorCount/errorRate/avgDuration
+ * (not bare ints — those were the legacy count-only shape).
+ */
+function formatByServiceStats(rows = []) {
+  return rows.reduce((acc, item) => {
+    if (item == null || item._id == null) return acc;
+    const totalRequests = item.totalRequests || 0;
+    const errorCount = item.errorCount || 0;
+    acc[item._id] = {
+      totalRequests,
+      errorCount,
+      errorRate:
+        totalRequests > 0
+          ? parseFloat(((errorCount / totalRequests) * 100).toFixed(2))
+          : 0,
+      avgDuration: item.avgDuration != null ? item.avgDuration : 0
+    };
+    return acc;
+  }, {});
+}
+
+/**
  * @route   GET /api/v1/logs/stats
  * @desc    Get aggregated statistics
  * @access  Private (API Key required)
@@ -316,7 +347,16 @@ router.get('/stats/summary', authenticate, async (req, res) => {
             { $group: { _id: '$level', count: { $sum: 1 } } }
           ],
           byService: [
-            { $group: { _id: '$service', count: { $sum: 1 } } }
+            {
+              $group: {
+                _id: '$service',
+                totalRequests: { $sum: 1 },
+                errorCount: {
+                  $sum: { $cond: [{ $eq: ['$level', 'error'] }, 1, 0] }
+                },
+                avgDuration: { $avg: '$duration' }
+              }
+            }
           ],
           byStatusCode: [
             { $group: { _id: '$statusCode', count: { $sum: 1 } } },
@@ -359,10 +399,7 @@ router.get('/stats/summary', authenticate, async (req, res) => {
           acc[item._id] = item.count;
           return acc;
         }, {}),
-        byService: result.byService.reduce((acc, item) => {
-          acc[item._id] = item.count;
-          return acc;
-        }, {}),
+        byService: formatByServiceStats(result.byService),
         byStatusCode: result.byStatusCode.reduce((acc, item) => {
           acc[item._id] = item.count;
           return acc;
@@ -433,3 +470,4 @@ module.exports = router;
 module.exports.TIME_RANGE_PRESETS = TIME_RANGE_PRESETS;
 module.exports.resolveTimeseriesWindow = resolveTimeseriesWindow;
 module.exports.fetchLogTimeseries = fetchLogTimeseries;
+module.exports.formatByServiceStats = formatByServiceStats;
