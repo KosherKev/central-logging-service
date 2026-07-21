@@ -44,8 +44,12 @@ if [ ! -f "${NPM_TOKEN_FILE}" ]; then
     exit 1
 fi
 
-echo "🏗️  Building Docker image (DOCKER_BUILDKIT=1, secret id=npm_token)..."
+echo "🏗️  Building Docker image (DOCKER_BUILDKIT=1, secret id=npm_token, linux/amd64)..."
+# --platform is required on Apple Silicon (arm64) — Cloud Run runs linux/amd64,
+# and a locally-built arm64 image fails at container start with
+# "exec format error" (the binary format doesn't match the host CPU).
 DOCKER_BUILDKIT=1 docker build \
+  --platform linux/amd64 \
   --secret id=npm_token,src="${NPM_TOKEN_FILE}" \
   -t ${IMAGE_NAME}:latest .
 
@@ -60,13 +64,12 @@ gcloud run deploy ${SERVICE_NAME} \
   --platform managed \
   --region ${REGION} \
   --allow-unauthenticated \
-  --port 8080 \
   --memory 512Mi \
   --cpu 1 \
   --min-instances 0 \
-  --max-instances 10 \
+  --max-instances 2 \
   --timeout 60 \
-  --update-env-vars "NODE_ENV=production,PORT=8080"
+  --update-env-vars "NODE_ENV=production"
 
 # Get service URL
 SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
