@@ -272,6 +272,19 @@ GET /api/v1/logs/stats/timeseries?timeRange=last_hour&service=user-api
 GET /api/v1/logs?service=user-api&level=error&from=2026-02-14&limit=50
 ```
 
+**Response envelope:**
+```json
+{
+  "success": true,
+  "data": [ /* page */ ],
+  "total": 4821,
+  "meta": { "limit": 50, "skip": 0 },
+  "pagination": { "total": 4821, "limit": 50, "skip": 0, "hasMore": true }
+}
+```
+
+Prefer top-level `total` + `meta` (LogPulse). `pagination` is kept for older clients.
+
 ### Get Log by Trace ID
 
 **Endpoint:** `GET /api/v1/logs/:traceId`
@@ -280,7 +293,7 @@ Returns all logs associated with a specific request trace.
 
 ### Get Statistics
 
-**Endpoint:** `GET /api/v1/logs/stats`
+**Endpoint:** `GET /api/v1/logs/stats/summary`
 
 **Query Parameters:**
 - `service` - Filter by service
@@ -291,7 +304,7 @@ Returns all logs associated with a specific request trace.
 ```json
 {
   "totalLogs": 10000,
-  "errorRate": 0.02,
+  "errorRate": "2.50",
   "avgDuration": 145,
   "byLevel": {
     "info": 8500,
@@ -299,12 +312,23 @@ Returns all logs associated with a specific request trace.
     "error": 200
   },
   "byService": {
-    "user-api": 5000,
-    "payment-api": 3000,
-    "order-api": 2000
+    "user-api": {
+      "totalRequests": 5000,
+      "errorCount": 100,
+      "errorRate": 2,
+      "avgDuration": 120.5
+    },
+    "payment-api": {
+      "totalRequests": 3000,
+      "errorCount": 90,
+      "errorRate": 3,
+      "avgDuration": 180.2
+    }
   }
 }
 ```
+
+Per-service `errorRate` is percent 0–100; `avgDuration` is ms (LogPulse maps to avgLatency).
 
 ## Client Integration
 
