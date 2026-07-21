@@ -240,6 +240,60 @@ curl "http://localhost:8080/api/v1/metrics?appId=academicx" \
 
 `health` or `metrics` is `null` when that kind has never been reported for the app.
 
+Response also includes `instanceCount` and `instances[]` (distinct `instanceId`s active in the last `instanceWindowSeconds`, default 900). See `docs/METRICS_READ_CONTRACT.md`.
+
+```bash
+curl "http://localhost:8080/api/v1/metrics?appId=academicx&instanceWindowSeconds=900" \
+  -H "X-API-Key: dev-key-123"
+```
+
+---
+
+## 2e. Log Traffic Timeseries (LogPulse)
+
+Flat API key (same as other log GETs). Unknown `timeRange` → 400.
+
+### Request
+```bash
+curl "http://localhost:8080/api/v1/logs/stats/timeseries?timeRange=last_24h" \
+  -H "X-API-Key: dev-key-123"
+
+curl "http://localhost:8080/api/v1/logs/stats/timeseries?timeRange=last_hour&service=user-api" \
+  -H "X-API-Key: dev-key-123"
+```
+
+### Response
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "timestamp": "2026-07-21T00:00:00.000Z",
+      "totalCount": 120,
+      "errorCount": 4
+    },
+    {
+      "timestamp": "2026-07-21T01:00:00.000Z",
+      "totalCount": 98,
+      "errorCount": 1
+    }
+  ],
+  "meta": {
+    "bucketMs": 3600000,
+    "timeRange": "last_24h",
+    "from": "2026-07-20T01:00:00.000Z",
+    "to": "2026-07-21T01:00:00.000Z"
+  }
+}
+```
+
+| timeRange | Bucket |
+|---|---|
+| last_hour | 5 min |
+| last_24h | 1 h |
+| last_7d | 12 h |
+| last_30d | 1 d |
+
 ---
 
 ## 3. Query Logs

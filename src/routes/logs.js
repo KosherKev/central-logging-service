@@ -182,6 +182,114 @@ router.get('/:traceId', authenticate, async (req, res) => {
 });
 
 /**
+ * Preset windows for LogPulse traffic charts.
+ * Bucket sizes chosen so charts stay readable (~12–24 points typical).
+ */
+const TIME_RANGE_PRESETS = {
+  last_hour: { windowMs: 60 * 60 * 1000, bucketMs: 5 * 60 * 1000 },
+  last_24h: { windowMs: 24 * 60 * 60 * 1000, bucketMs: 60 * 60 * 1000 },
+  last_7d: { windowMs: 7 * 24 * 60 * 60 * 1000, bucketMs: 12 * 60 * 60 * 1000 },
+  last_30d: { windowMs: 30 * 24 * 60 * 60 * 1000, bucketMs: 24 * 60 * 60 * 1000 }
+};
+
+/**
+ * Resolve timeseries window + bucket from query.
+ * @returns {{ start: Date, end: Date, bucketMs: number, timeRange: string, service?: string } | { error: string }}
+ */
+function resolveTimeseriesWindow(query = {}) {
+  const { timeRange = 'last_24h', from, to, service } = query;
+
+  if (timeRange != null && timeRange !== '' && !TIME_RANGE_PRESETS[timeRange]) {
+    return {
+      error: `Invalid timeRange. Expected one of: ${Object.keys(TIME_RANGE_PRESETS).join(', ')}`
+    };
+  }
+
+  const rangeKey = TIME_RANGE_PRESETS[timeRange] ? timeRange : 'last_24h';
+  const preset = TIME_RANGE_PRESETS[rangeKey];
+  const end = to ? new Date(to) : new Date();
+  if (Number.isNaN(end.getTime())) {
+    return { error: 'Invalid "to" date; expected ISO-8601' };
+  }
+
+  let start;
+  if (from) {
+    start = new Date(from);
+    if (Number.isNaN(start.getTime())) {
+      return { error: 'Invalid "from" date; expected ISO-8601' };
+    }
+  } else {
+    start = new Date(end.getTime() - preset.windowMs);
+  }
+
+  if (start > end) {
+    return { error: '"from" must be before "to"' };
+  }
+
+  let bucketMs = preset.bucketMs;
+  // Absolute from/to without a known preset range: pick bucket from duration
+  if (from && to && !TIME_RANGE_PRESETS[timeRange]) {
+    const duration = end.getTime() - start.getTime();
+    if (duration <= 2 * 60 * 60 * 1000) bucketMs = 5 * 60 * 1000;
+    else if (duration <= 2 * 24 * 60 * 60 * 1000) bucketMs = 60 * 60 * 1000;
+    else if (duration <= 14 * 24 * 60 * 60 * 1000) bucketMs = 12 * 60 * 60 * 1000;
+    else bucketMs = 24 * 60 * 60 * 1000;
+  }
+
+  return {
+    start,
+    end,
+    bucketMs,
+    timeRange: rangeKey,
+    ...(typeof service === 'string' && service.trim()
+      ? { service: service.trim() }
+      : {})
+  };
+}
+
+/**
+ * Aggregate total/error counts into UTC-aligned time buckets.
+ * Counts every matching log in the window — not a sample.
+ */
+async function fetchLogTimeseries({ start, end, bucketMs, service }) {
+  const matchQuery = {
+    timestamp: { $gte: start, $lte: end }
+  };
+  if (service) matchQuery.service = service;
+
+  const rows = await Log.aggregate([
+    { $match: matchQuery },
+    {
+      $group: {
+        _id: {
+          $toDate: {
+            $subtract: [
+              { $toLong: '$timestamp' },
+              { $mod: [{ $toLong: '$timestamp' }, bucketMs] }
+            ]
+          }
+        },
+        totalCount: { $sum: 1 },
+        errorCount: {
+          $sum: { $cond: [{ $eq: ['$level', 'error'] }, 1, 0] }
+        }
+      }
+    },
+    { $sort: { _id: 1 } },
+    {
+      $project: {
+        _id: 0,
+        timestamp: '$_id',
+        totalCount: 1,
+        errorCount: 1
+      }
+    }
+  ]);
+
+  return rows;
+}
+
+/**
  * @route   GET /api/v1/logs/stats
  * @desc    Get aggregated statistics
  * @access  Private (API Key required)
@@ -277,4 +385,51 @@ router.get('/stats/summary', authenticate, async (req, res) => {
   }
 });
 
+/**
+ * @route   GET /api/v1/logs/stats/timeseries
+ * @desc    Bucketed total/error counts for LogPulse traffic charts
+ * @access  Private (flat API key — same as other log reads)
+ * @query   timeRange=last_hour|last_24h|last_7d|last_30d (default last_24h)
+ * @query   service, from, to (optional ISO-8601 absolute window)
+ */
+router.get('/stats/timeseries', authenticate, async (req, res) => {
+  try {
+    const resolved = resolveTimeseriesWindow(req.query);
+    if (resolved.error) {
+      return res.status(400).json({
+        success: false,
+        error: resolved.error
+      });
+    }
+
+    const { start, end, bucketMs, timeRange, service } = resolved;
+    const data = await fetchLogTimeseries({ start, end, bucketMs, service });
+
+    res.json({
+      success: true,
+      data,
+      meta: {
+        bucketMs,
+        timeRange,
+        from: start.toISOString(),
+        to: end.toISOString()
+      }
+    });
+  } catch (error) {
+    logger.error('Error calculating log timeseries', {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to calculate timeseries'
+    });
+  }
+});
+
 module.exports = router;
+module.exports.TIME_RANGE_PRESETS = TIME_RANGE_PRESETS;
+module.exports.resolveTimeseriesWindow = resolveTimeseriesWindow;
+module.exports.fetchLogTimeseries = fetchLogTimeseries;

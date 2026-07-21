@@ -175,15 +175,17 @@ The authenticated key's `subjectId` must equal `appId` or the request is rejecte
 
 **Endpoint:** `GET /api/v1/metrics`
 
-Operator/dashboard read (flat `API_KEYS` auth — same as `GET /api/v1/logs`, **not** per-app `metricsAuth`).
+Operator/dashboard read (flat `API_KEYS` auth — same as `GET /api/v1/logs`, **not** per-app `metricsAuth`). Full contract: [`docs/METRICS_READ_CONTRACT.md`](docs/METRICS_READ_CONTRACT.md).
 
 **Query Parameters:**
 - `appId` — optional; when set, only that app; when omitted, one entry per distinct `appId`
+- `instanceWindowSeconds` — optional window for distinct instance counting (default `900`)
 
 **Example:**
 ```bash
 GET /api/v1/metrics
 GET /api/v1/metrics?appId=academicx
+GET /api/v1/metrics?appId=academicx&instanceWindowSeconds=900
 ```
 
 **Response:**
@@ -202,13 +204,55 @@ GET /api/v1/metrics?appId=academicx
       "metrics": {
         "activeStudents": 412
       },
-      "metricsReportedAt": "2026-07-20T12:05:00.000Z"
+      "metricsReportedAt": "2026-07-20T12:05:00.000Z",
+      "instanceCount": 2,
+      "instances": [
+        {
+          "instanceId": "rev-abc-1",
+          "lastSeen": "2026-07-20T12:05:00.000Z",
+          "status": "ok",
+          "uptimeSeconds": 1234
+        },
+        {
+          "instanceId": "rev-def-2",
+          "lastSeen": "2026-07-20T12:04:00.000Z",
+          "status": "ok",
+          "uptimeSeconds": 800
+        }
+      ]
     }
   ]
 }
 ```
 
-`health` / `metrics` are `null` if that app has never reported that kind.
+`health` / `metrics` are `null` if that app has never reported that kind. `instanceCount` is a distinct aggregation over the activity window — not inferred from `health.instanceId` alone.
+
+### Log Traffic Timeseries (LogPulse charts)
+
+**Endpoint:** `GET /api/v1/logs/stats/timeseries`
+
+**Query Parameters:**
+- `timeRange` — `last_hour` | `last_24h` (default) | `last_7d` | `last_30d`
+- `service` — optional log service filter
+- `from` / `to` — optional absolute ISO-8601 window
+
+**Example:**
+```bash
+GET /api/v1/logs/stats/timeseries?timeRange=last_24h
+GET /api/v1/logs/stats/timeseries?timeRange=last_hour&service=user-api
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    { "timestamp": "2026-07-21T00:00:00.000Z", "totalCount": 120, "errorCount": 4 },
+    { "timestamp": "2026-07-21T01:00:00.000Z", "totalCount": 98, "errorCount": 1 }
+  ],
+  "meta": { "bucketMs": 3600000, "timeRange": "last_24h", "from": "…", "to": "…" }
+}
+```
 
 ### Query Logs
 

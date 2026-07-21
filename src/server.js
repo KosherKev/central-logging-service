@@ -48,6 +48,7 @@ app.get('/', (req, res) => {
       queryLogs: 'GET /api/v1/logs',
       getLogsByTraceId: 'GET /api/v1/logs/:traceId',
       getStats: 'GET /api/v1/logs/stats/summary',
+      getLogTimeseries: 'GET /api/v1/logs/stats/timeseries',
       submitMetrics: 'POST /api/v1/metrics',
       submitHealthMetric: 'POST /api/v1/metrics/health',
       queryMetrics: 'GET /api/v1/metrics'

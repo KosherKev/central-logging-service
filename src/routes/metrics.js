@@ -7,6 +7,9 @@ const metricsAuth = require('../middleware/metricsAuth');
 const rateLimit = require('../middleware/rateLimit');
 const { validateHealthReport, validateMetricsReport } = require('../middleware/validation');
 
+/** Default window for distinct instanceId counting (15 minutes). */
+const DEFAULT_INSTANCE_WINDOW_SECONDS = 900;
+
 /**
  * Enforce that the authenticated key's subjectId matches the claimed appId.
  * A leaked key for app A must not be able to post as app B.
@@ -63,11 +66,97 @@ function mergeLatestByApp(healthRows, metricRows) {
 }
 
 /**
+ * Attach distinct-instance stats for the activity window.
+ * instanceCount is always set (never inferred from health.instanceId alone).
+ */
+function attachInstanceStats(rows, instanceRows) {
+  const byApp = new Map();
+
+  for (const inst of instanceRows) {
+    const list = byApp.get(inst.appId) || [];
+    list.push({
+      instanceId: inst.instanceId,
+      lastSeen: inst.lastSeen,
+      status: inst.status != null ? inst.status : null,
+      uptimeSeconds: inst.uptimeSeconds != null ? inst.uptimeSeconds : null
+    });
+    byApp.set(inst.appId, list);
+  }
+
+  for (const row of rows) {
+    const instances = byApp.get(row.appId) || [];
+    instances.sort(
+      (a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime()
+    );
+    row.instanceCount = instances.length;
+    row.instances = instances;
+  }
+
+  return rows;
+}
+
+/**
+ * Distinct instanceIds per app with activity in [windowStart, now].
+ * lastSeen = max timestamp of any kind; status/uptime from latest health in window.
+ */
+async function fetchInstanceStats(appIdFilter, windowStart) {
+  const baseMatch = {
+    ...(appIdFilter ? { appId: appIdFilter } : {}),
+    timestamp: { $gte: windowStart },
+    instanceId: { $exists: true, $nin: [null, ''] }
+  };
+
+  return Metric.aggregate([
+    { $match: baseMatch },
+    { $sort: { timestamp: -1 } },
+    {
+      $group: {
+        _id: { appId: '$appId', instanceId: '$instanceId' },
+        lastSeen: { $max: '$timestamp' },
+        // After sort desc, push health-only entries in recency order
+        healthEntries: {
+          $push: {
+            $cond: [
+              { $eq: ['$kind', 'health'] },
+              {
+                status: '$status',
+                uptimeSeconds: '$uptimeSeconds'
+              },
+              '$$REMOVE'
+            ]
+          }
+        }
+      }
+    },
+    {
+      $project: {
+        _id: 0,
+        appId: '$_id.appId',
+        instanceId: '$_id.instanceId',
+        lastSeen: 1,
+        status: {
+          $ifNull: [{ $arrayElemAt: ['$healthEntries.status', 0] }, null]
+        },
+        uptimeSeconds: {
+          $ifNull: [{ $arrayElemAt: ['$healthEntries.uptimeSeconds', 0] }, null]
+        }
+      }
+    }
+  ]);
+}
+
+/**
  * Latest health-kind + metric-kind docs per app via aggregation
  * ($sort timestamp desc, $group by appId per kind), then merge in app code.
+ * Plus distinct instanceCount/instances[] over instanceWindowSeconds.
  */
-async function fetchLatestMetricsSnapshot(appIdFilter) {
+async function fetchLatestMetricsSnapshot(appIdFilter, options = {}) {
   const baseMatch = appIdFilter ? { appId: appIdFilter } : {};
+  const instanceWindowSeconds =
+    options.instanceWindowSeconds != null
+      ? options.instanceWindowSeconds
+      : DEFAULT_INSTANCE_WINDOW_SECONDS;
+  const windowStart = new Date(Date.now() - instanceWindowSeconds * 1000);
 
   const latestByKind = (kind) =>
     Metric.aggregate([
@@ -81,12 +170,14 @@ async function fetchLatestMetricsSnapshot(appIdFilter) {
       }
     ]);
 
-  const [healthRows, metricRows] = await Promise.all([
+  const [healthRows, metricRows, instanceRows] = await Promise.all([
     latestByKind('health'),
-    latestByKind('metric')
+    latestByKind('metric'),
+    fetchInstanceStats(appIdFilter, windowStart)
   ]);
 
-  return mergeLatestByApp(healthRows, metricRows);
+  const merged = mergeLatestByApp(healthRows, metricRows);
+  return attachInstanceStats(merged, instanceRows);
 }
 
 /**
@@ -169,12 +260,26 @@ router.post('/', metricsAuth, rateLimit, validateMetricsReport, async (req, res)
  * @desc    Latest health + metrics snapshot per app (operator/dashboard read)
  * @access  Private (flat API key — same as GET /api/v1/logs; not per-app metricsAuth)
  * @query   appId - optional; when set, only that app; when omitted, one entry per appId
+ * @query   instanceWindowSeconds - optional window for distinct instance count (default 900)
  */
 router.get('/', authenticate, async (req, res) => {
   try {
-    const { appId } = req.query;
+    const { appId, instanceWindowSeconds: rawWindow } = req.query;
+    let instanceWindowSeconds = DEFAULT_INSTANCE_WINDOW_SECONDS;
+    if (rawWindow != null && rawWindow !== '') {
+      const parsed = parseInt(rawWindow, 10);
+      if (Number.isNaN(parsed) || parsed < 1) {
+        return res.status(400).json({
+          success: false,
+          error: 'instanceWindowSeconds must be a positive integer'
+        });
+      }
+      instanceWindowSeconds = parsed;
+    }
+
     const data = await fetchLatestMetricsSnapshot(
-      typeof appId === 'string' && appId.trim() ? appId.trim() : undefined
+      typeof appId === 'string' && appId.trim() ? appId.trim() : undefined,
+      { instanceWindowSeconds }
     );
 
     res.json({
@@ -199,4 +304,7 @@ module.exports = router;
 // Exported for unit tests
 module.exports.enforceAppScope = enforceAppScope;
 module.exports.mergeLatestByApp = mergeLatestByApp;
+module.exports.attachInstanceStats = attachInstanceStats;
 module.exports.fetchLatestMetricsSnapshot = fetchLatestMetricsSnapshot;
+module.exports.fetchInstanceStats = fetchInstanceStats;
+module.exports.DEFAULT_INSTANCE_WINDOW_SECONDS = DEFAULT_INSTANCE_WINDOW_SECONDS;
