@@ -171,6 +171,45 @@ The authenticated key's `subjectId` must equal `appId` or the request is rejecte
 
 `metrics` is intentionally unconstrained (any object). Schema validation only checks that it is an object.
 
+### Query Latest Metrics Snapshot
+
+**Endpoint:** `GET /api/v1/metrics`
+
+Operator/dashboard read (flat `API_KEYS` auth — same as `GET /api/v1/logs`, **not** per-app `metricsAuth`).
+
+**Query Parameters:**
+- `appId` — optional; when set, only that app; when omitted, one entry per distinct `appId`
+
+**Example:**
+```bash
+GET /api/v1/metrics
+GET /api/v1/metrics?appId=academicx
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "appId": "academicx",
+      "health": {
+        "status": "ok",
+        "instanceId": "rev-abc-1",
+        "uptimeSeconds": 1234,
+        "timestamp": "2026-07-20T12:00:00.000Z"
+      },
+      "metrics": {
+        "activeStudents": 412
+      },
+      "metricsReportedAt": "2026-07-20T12:05:00.000Z"
+    }
+  ]
+}
+```
+
+`health` / `metrics` are `null` if that app has never reported that kind.
+
 ### Query Logs
 
 **Endpoint:** `GET /api/v1/logs`

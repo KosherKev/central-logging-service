@@ -49,7 +49,8 @@ app.get('/', (req, res) => {
       getLogsByTraceId: 'GET /api/v1/logs/:traceId',
       getStats: 'GET /api/v1/logs/stats/summary',
       submitMetrics: 'POST /api/v1/metrics',
-      submitHealthMetric: 'POST /api/v1/metrics/health'
+      submitHealthMetric: 'POST /api/v1/metrics/health',
+      queryMetrics: 'GET /api/v1/metrics'
     },
     documentation: 'See README.md for full API documentation'
   });
