@@ -200,6 +200,48 @@ curl -X POST http://localhost:8080/api/v1/metrics \
 
 ---
 
+## 2d. Query Latest Metrics Snapshot
+
+Operator/dashboard read. Uses the **flat** logs-style API key (`API_KEYS` / `dev-key-123`), not a per-app `sk_live_` key. No rate limit (same as `GET /api/v1/logs`).
+
+### All apps
+```bash
+curl "http://localhost:8080/api/v1/metrics" \
+  -H "X-API-Key: dev-key-123"
+```
+
+### Single app
+```bash
+curl "http://localhost:8080/api/v1/metrics?appId=academicx" \
+  -H "X-API-Key: dev-key-123"
+```
+
+### Response
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "appId": "academicx",
+      "health": {
+        "status": "ok",
+        "instanceId": "rev-abc-1",
+        "uptimeSeconds": 1234,
+        "timestamp": "2026-07-20T12:00:00.000Z"
+      },
+      "metrics": {
+        "activeStudents": 412
+      },
+      "metricsReportedAt": "2026-07-20T12:05:00.000Z"
+    }
+  ]
+}
+```
+
+`health` or `metrics` is `null` when that kind has never been reported for the app.
+
+---
+
 ## 3. Query Logs
 
 ### Basic Query

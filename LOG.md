@@ -184,3 +184,27 @@ npm run generate-app-key -- academicx
 - `@bevingh/telemetry` source (bevin-core)
 - AcademicX / academicx-api client wiring
 - Uptime Kuma infra
+
+---
+
+## 2026-07-20 — PR-24: GET /api/v1/metrics read route
+
+### What was built
+
+Additive read path for the same `metrics` collection the POSTs already write to. No changes to `metricsAuth.js`, POST handlers, or `ApiKeyCandidate`.
+
+| Surface | Detail |
+|---|---|
+| `GET /api/v1/metrics?appId=<optional>` | Latest health-kind doc merged with latest metric-kind doc, per app |
+| Auth | Flat `authenticate` (same as `GET /api/v1/logs`) — operator/dashboard credential; **not** per-app write scoping |
+| Rate limit | None (matches logs GET routes; only POSTs use rateLimit) |
+| Implementation | Two `Metric.aggregate` pipelines: `$match` kind (+ optional appId) → `$sort: { timestamp: -1 }` → `$group` by `appId` with `$first`; merge groupings in app code (`mergeLatestByApp`) |
+| Missing kinds | `health` / `metrics` / `metricsReportedAt` are `null` when that kind was never reported — no error |
+| Root listing | `queryMetrics: 'GET /api/v1/metrics'` in `server.js` |
+| Tests | `tests/metricsRead.test.js` — merge pure function + mocked `Metric.aggregate` (filter + pipeline shape) |
+
+### Not started / still out of scope
+
+- Dashboard UI
+- AcademicX wiring
+- History/time-range queries (this is latest-snapshot only)
