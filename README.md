@@ -291,6 +291,21 @@ Prefer top-level `total` + `meta` (LogPulse). `pagination` is kept for older cli
 
 Returns all logs associated with a specific request trace.
 
+### Error Groups (LogPulse Errors tab)
+
+**Endpoint:** `GET /api/v1/logs/errors/groups`
+
+Flat `X-API-Key`. Groups logs where `level === 'error'` **or** `statusCode >= 400` (matches LogPulse `LogEntry.isError`). Fingerprint = `fp_` + sha1(normalized message + code). Sorted by `lastSeen` desc.
+
+**Query:** `timeRange` (default `last_24h`), optional `service`, `limit` (default 50, max 200).
+
+### Services Catalog
+
+**Endpoint:** `GET /api/v1/services`  
+**Endpoint:** `GET /api/v1/services/:name`
+
+Union of log `service` names and metrics `appId`s for the window. Detail includes top-20 endpoint rollups plus the same `health` / `metrics` / `instances` shapes as `GET /api/v1/metrics`. Unknown name → 404.
+
 ### Get Statistics
 
 **Endpoint:** `GET /api/v1/logs/stats/summary`

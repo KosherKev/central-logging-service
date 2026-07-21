@@ -296,6 +296,51 @@ curl "http://localhost:8080/api/v1/logs/stats/timeseries?timeRange=last_hour&ser
 
 ---
 
+## 2f. Error Groups
+
+```bash
+curl "http://localhost:8080/api/v1/logs/errors/groups?timeRange=last_24h&limit=50" \
+  -H "X-API-Key: dev-key-123"
+```
+
+Inclusion: `level === 'error'` OR `statusCode >= 400`. Empty window → `"data": []`. Sorted by `lastSeen` desc.
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "fp_a1b2c3d4e5f6",
+      "message": "Connection refused to redis",
+      "errorCode": "ECONNREFUSED",
+      "count": 47,
+      "services": ["academicx", "payments-api"],
+      "firstSeen": "2026-07-21T08:00:00.000Z",
+      "lastSeen": "2026-07-21T12:30:00.000Z",
+      "sampleStack": "Error: ...",
+      "sampleTraceId": "trace-abc",
+      "trend": "increasing"
+    }
+  ]
+}
+```
+
+---
+
+## 2g. Services Catalog
+
+```bash
+curl "http://localhost:8080/api/v1/services?timeRange=last_24h" \
+  -H "X-API-Key: dev-key-123"
+
+curl "http://localhost:8080/api/v1/services/academicx?timeRange=last_24h" \
+  -H "X-API-Key: dev-key-123"
+```
+
+List is a **union** of log services + metrics `appId`s, sorted by `totalRequests` desc then `lastSeen` desc. Detail 404s when name has no logs in window and no metrics snapshot.
+
+---
+
 ## 3. Query Logs
 
 ### Basic Query

@@ -257,6 +257,31 @@ LogPulse Analytics already expects these surfaces. Server gaps closed so traffic
 
 - Error groups, services catalog, stage timings
 
+---
+
+## 2026-07-21 — P2 read API: error groups + services catalog
+
+### What was built
+
+| # | Route | Notes |
+|---|---|---|
+| 1 | `GET /api/v1/logs/errors/groups` | Fingerprint groups for Errors tab. Inclusion = LogPulse `isError`: `level==='error'` OR `statusCode>=400`. Id = `fp_`+sha1(normalize(message)\|code). Sort: `lastSeen` desc. `trend` = recent vs earlier half of window. |
+| 2 | `GET /api/v1/services` | Union of log services + metrics appIds. Rollups align with summary `byService` (errorRate %, avgLatency ms). `instanceCount` from metrics window = full timeRange. Sort: `totalRequests` desc, then `lastSeen` desc. |
+| 3 | `GET /api/v1/services/:name` | Endpoints top-20 by requestCount (method+path). `health`/`metrics`/`instances` reuse `fetchLatestMetricsSnapshot`. 404 if unknown. |
+
+### Files
+
+- `src/utils/errorFingerprint.js`, `src/utils/displayName.js`
+- `src/routes/logs.js` — `fetchErrorGroups` + route
+- `src/routes/services.js` — catalog + detail
+- `src/server.js` — mount `/api/v1/services`
+- Tests: `tests/errorGroups.test.js`, `tests/servicesCatalog.test.js`
+
+### Still out of scope
+
+- Stage timings / timeline spans (P3)
+- Webhooks/notifications
+
 ### Acceptance notes
 
 - Timeseries aggregates the full match window (Mongo `$group` buckets).

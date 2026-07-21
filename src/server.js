@@ -7,6 +7,7 @@ const connectDB = require('./config/database');
 const errorHandler = require('./middleware/errorHandler');
 const logsRoutes = require('./routes/logs');
 const metricsRoutes = require('./routes/metrics');
+const servicesRoutes = require('./routes/services');
 const healthRoutes = require('./routes/health');
 const logger = require('./utils/logger');
 
@@ -33,6 +34,7 @@ if (config.nodeEnv === 'development') {
 // Routes
 app.use('/api/v1/logs', logsRoutes);
 app.use('/api/v1/metrics', metricsRoutes);
+app.use('/api/v1/services', servicesRoutes);
 app.use('/', healthRoutes);
 
 // Root endpoint
@@ -49,9 +51,12 @@ app.get('/', (req, res) => {
       getLogsByTraceId: 'GET /api/v1/logs/:traceId',
       getStats: 'GET /api/v1/logs/stats/summary',
       getLogTimeseries: 'GET /api/v1/logs/stats/timeseries',
+      getErrorGroups: 'GET /api/v1/logs/errors/groups',
       submitMetrics: 'POST /api/v1/metrics',
       submitHealthMetric: 'POST /api/v1/metrics/health',
-      queryMetrics: 'GET /api/v1/metrics'
+      queryMetrics: 'GET /api/v1/metrics',
+      listServices: 'GET /api/v1/services',
+      getService: 'GET /api/v1/services/:name'
     },
     documentation: 'See README.md for full API documentation'
   });

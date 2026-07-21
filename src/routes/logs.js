@@ -6,6 +6,12 @@ const logger = require('../utils/logger');
 const authenticate = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 const { validateLogBatch } = require('../middleware/validation');
+const {
+  normalizeErrorMessage,
+  fingerprintError,
+  computeTrend,
+  pickDisplayMessage
+} = require('../utils/errorFingerprint');
 
 /**
  * @route   POST /api/v1/logs
@@ -466,8 +472,181 @@ router.get('/stats/timeseries', authenticate, async (req, res) => {
   }
 });
 
+/**
+ * Error rule matching LogPulse LogEntry.isError:
+ * level === 'error' OR statusCode >= 400
+ */
+const ERROR_LOG_MATCH = {
+  $or: [{ level: 'error' }, { statusCode: { $gte: 400 } }]
+};
+
+/**
+ * Aggregate error/status>=400 logs into fingerprint groups for the Errors tab.
+ * Sorted by lastSeen desc. Empty window → [].
+ */
+async function fetchErrorGroups({ start, end, service, limit = 50 }) {
+  const midMs = start.getTime() + (end.getTime() - start.getTime()) / 2;
+  const mid = new Date(midMs);
+
+  const matchQuery = {
+    timestamp: { $gte: start, $lte: end },
+    ...ERROR_LOG_MATCH
+  };
+  if (service) matchQuery.service = service;
+
+  const rows = await Log.aggregate([
+    { $match: matchQuery },
+    {
+      $addFields: {
+        _errorMessage: {
+          $ifNull: ['$error.message', 'Unknown error']
+        },
+        _errorCode: { $ifNull: ['$error.code', null] }
+      }
+    },
+    // Ascending sort so $last in $group is the chronologically latest sample
+    { $sort: { timestamp: 1 } },
+    {
+      $group: {
+        _id: {
+          // Pre-group by truncated lower message + code; re-merge by full fingerprint in app
+          msgKey: {
+            $substrCP: [{ $toLower: '$_errorMessage' }, 0, 200]
+          },
+          code: { $ifNull: ['$_errorCode', ''] }
+        },
+        count: { $sum: 1 },
+        services: { $addToSet: '$service' },
+        firstSeen: { $min: '$timestamp' },
+        lastSeen: { $max: '$timestamp' },
+        sampleMessage: { $last: '$_errorMessage' },
+        sampleStack: { $last: '$error.stack' },
+        sampleTraceId: { $last: '$traceId' },
+        sampleCode: { $last: '$_errorCode' },
+        recentCount: {
+          $sum: { $cond: [{ $gte: ['$timestamp', mid] }, 1, 0] }
+        },
+        earlierCount: {
+          $sum: { $cond: [{ $lt: ['$timestamp', mid] }, 1, 0] }
+        }
+      }
+    },
+    { $sort: { lastSeen: -1 } }
+  ]);
+
+  // Merge Mongo pre-groups that share the same fingerprint (normalize collapses UUIDs/numbers)
+  const byFp = new Map();
+  for (const row of rows) {
+    const message = pickDisplayMessage(row.sampleMessage, row.sampleCode);
+    const errorCode =
+      row.sampleCode != null && row.sampleCode !== '' ? row.sampleCode : null;
+    const id = fingerprintError(message, errorCode);
+
+    const existing = byFp.get(id);
+    if (!existing) {
+      byFp.set(id, {
+        id,
+        message,
+        errorCode,
+        count: row.count,
+        services: new Set((row.services || []).filter(Boolean)),
+        firstSeen: row.firstSeen,
+        lastSeen: row.lastSeen,
+        sampleStack: row.sampleStack || null,
+        sampleTraceId: row.sampleTraceId || null,
+        recentCount: row.recentCount || 0,
+        earlierCount: row.earlierCount || 0
+      });
+      continue;
+    }
+
+    existing.count += row.count;
+    existing.recentCount += row.recentCount || 0;
+    existing.earlierCount += row.earlierCount || 0;
+    for (const s of row.services || []) {
+      if (s) existing.services.add(s);
+    }
+    if (row.firstSeen < existing.firstSeen) existing.firstSeen = row.firstSeen;
+    if (row.lastSeen > existing.lastSeen) {
+      existing.lastSeen = row.lastSeen;
+      existing.message = message;
+      existing.errorCode = errorCode;
+      existing.sampleStack = row.sampleStack || existing.sampleStack;
+      existing.sampleTraceId = row.sampleTraceId || existing.sampleTraceId;
+    }
+  }
+
+  const groups = Array.from(byFp.values())
+    .map((g) => ({
+      id: g.id,
+      message: g.message,
+      ...(g.errorCode != null ? { errorCode: g.errorCode } : { errorCode: null }),
+      count: g.count,
+      services: Array.from(g.services).sort(),
+      firstSeen: g.firstSeen,
+      lastSeen: g.lastSeen,
+      sampleStack: g.sampleStack,
+      sampleTraceId: g.sampleTraceId,
+      trend: computeTrend(g.earlierCount, g.recentCount)
+    }))
+    .sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen))
+    .slice(0, limit);
+
+  return groups;
+}
+
+/**
+ * @route   GET /api/v1/logs/errors/groups
+ * @desc    Fingerprinted error groups for LogPulse Errors tab
+ * @access  Private (flat API key)
+ * @query   timeRange, service, limit (default 50, max 200)
+ *
+ * Inclusion rule (matches LogPulse LogEntry.isError):
+ *   level === 'error' OR statusCode >= 400
+ * Sort: lastSeen descending.
+ */
+router.get('/errors/groups', authenticate, async (req, res) => {
+  try {
+    const resolved = resolveTimeseriesWindow(req.query);
+    if (resolved.error) {
+      return res.status(400).json({
+        success: false,
+        error: resolved.error
+      });
+    }
+
+    let limit = parseInt(req.query.limit, 10);
+    if (Number.isNaN(limit) || limit < 1) limit = 50;
+    limit = Math.min(limit, 200);
+
+    const { start, end, service } = resolved;
+    const data = await fetchErrorGroups({ start, end, service, limit });
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    logger.error('Error fetching error groups', {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch error groups'
+    });
+  }
+});
+
 module.exports = router;
 module.exports.TIME_RANGE_PRESETS = TIME_RANGE_PRESETS;
 module.exports.resolveTimeseriesWindow = resolveTimeseriesWindow;
 module.exports.fetchLogTimeseries = fetchLogTimeseries;
 module.exports.formatByServiceStats = formatByServiceStats;
+module.exports.fetchErrorGroups = fetchErrorGroups;
+module.exports.ERROR_LOG_MATCH = ERROR_LOG_MATCH;
+module.exports.normalizeErrorMessage = normalizeErrorMessage;
+module.exports.fingerprintError = fingerprintError;
+module.exports.computeTrend = computeTrend;
