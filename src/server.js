@@ -8,6 +8,7 @@ const errorHandler = require('./middleware/errorHandler');
 const logsRoutes = require('./routes/logs');
 const metricsRoutes = require('./routes/metrics');
 const servicesRoutes = require('./routes/services');
+const jobsRoutes = require('./routes/jobs');
 const healthRoutes = require('./routes/health');
 const logger = require('./utils/logger');
 
@@ -35,6 +36,7 @@ if (config.nodeEnv === 'development') {
 app.use('/api/v1/logs', logsRoutes);
 app.use('/api/v1/metrics', metricsRoutes);
 app.use('/api/v1/services', servicesRoutes);
+app.use('/jobs', jobsRoutes);
 app.use('/', healthRoutes);
 
 // Root endpoint
@@ -56,7 +58,8 @@ app.get('/', (req, res) => {
       submitHealthMetric: 'POST /api/v1/metrics/health',
       queryMetrics: 'GET /api/v1/metrics',
       listServices: 'GET /api/v1/services',
-      getService: 'GET /api/v1/services/:name'
+      getService: 'GET /api/v1/services/:name',
+      purgeOldLogs: 'POST /jobs/purge-logs'
     },
     documentation: 'See README.md for full API documentation'
   });
