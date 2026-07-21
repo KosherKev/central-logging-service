@@ -1,23 +1,32 @@
-# Metrics Read API — actual contract vs. LogPulse's provisional contract
+# Metrics Read API — contract for LogPulse (and other dashboards)
 
-**Status as of 2026-07-21: this document corrects the assumption ("no read
-route exists yet") carried in the LogPulse/telemetry continuity thread.**
-`GET /api/v1/metrics` was built and merged in **PR-24** (LOG.md, 2026-07-20),
-the same day as PR-22 (write routes). It is live, tested
-(`tests/metricsRead.test.js`), and listed in `server.js`'s root endpoint
-listing. It does **not**, however, match the shape LogPulse's client code
-was written against. This doc is the reconciliation.
+**Status as of 2026-07-21 (P0 read slice):** `GET /api/v1/metrics` is the
+canonical latest-snapshot read. It was introduced in **PR-24** and extended
+in this PR with **`instanceCount` / `instances[]`**. Log write-side
+auth remains flat `X-API-Key`; metrics **writes** still use per-app
+`metricsAuth`.
 
-## 1. The real, as-built contract (PR-24)
+Related: `GET /api/v1/logs/stats/timeseries` (P0 traffic chart) lives under
+the logs router; see §6.
+
+---
+
+## 1. `GET /api/v1/metrics`
 
 ```
-GET /api/v1/metrics?appId=<optional>
+GET /api/v1/metrics?appId=<optional>&instanceWindowSeconds=<optional>
 Auth: flat X-API-Key (same `authenticate` middleware as GET /api/v1/logs —
       NOT the per-app metricsAuth used by the POST routes)
 Rate limit: none (matches other GET routes)
 ```
 
-Response:
+| Query | Default | Notes |
+|---|---|---|
+| `appId` | (all apps) | When set, only that app’s row |
+| `instanceWindowSeconds` | `900` (15m) | Window for **distinct instance count only**. Latest health/metrics stay all-time latest snapshot |
+
+### Response shape
+
 ```json
 {
   "success": true,
@@ -26,98 +35,165 @@ Response:
       "appId": "academicx",
       "health": {
         "status": "ok",
-        "instanceId": "rev-1-a3f9",
-        "uptimeSeconds": 1234,
-        "timestamp": "2026-07-20T12:00:00.000Z"
+        "instanceId": "rev-abc-xyz",
+        "uptimeSeconds": 86400,
+        "timestamp": "2026-07-21T12:00:00.000Z"
       },
-      "metrics": { "activeStudents": 412 },
-      "metricsReportedAt": "2026-07-20T12:05:00.000Z"
+      "metrics": {
+        "students": 120,
+        "activeToday": 45
+      },
+      "metricsReportedAt": "2026-07-21T12:01:00.000Z",
+      "instanceCount": 3,
+      "instances": [
+        {
+          "instanceId": "rev-abc-xyz",
+          "lastSeen": "2026-07-21T12:00:00.000Z",
+          "status": "ok",
+          "uptimeSeconds": 86400
+        },
+        {
+          "instanceId": "rev-def-uvw",
+          "lastSeen": "2026-07-21T11:58:00.000Z",
+          "status": "ok",
+          "uptimeSeconds": 1200
+        },
+        {
+          "instanceId": "rev-ghi-rst",
+          "lastSeen": "2026-07-21T11:55:00.000Z",
+          "status": "degraded",
+          "uptimeSeconds": 300
+        }
+      ]
     }
   ]
 }
 ```
 
-**Semantics — read carefully, this is the part that surprises people:**
+### Semantics
 
-- **Latest-snapshot only, not a time range.** Implementation is two
-  `Metric.aggregate` pipelines (`$match kind` → `$sort timestamp desc` →
-  `$group by appId, $first`) merged in app code. There is no `from`/`to`/
-  `timeRange` query support. Asking for history returns the same single
-  latest doc regardless.
-- **One row per `appId`, not per `instanceId`.** If three instances of
-  `academicx` are reporting, this endpoint returns whichever one's health
-  ping sorted last — not a count, not an aggregate across instances.
-- **`health` and `metrics` come from separate `kind` documents** and can be
-  independently `null` — an app that only calls `reportHealth()` and never
-  `reportMetrics()` (or vice versa) is fully expected and not an error.
-- **No computed fields.** No error rate, no latency, no uptime percentage.
-  `health.uptimeSeconds` is the process's raw seconds-since-start (from
-  `reportHealth()`'s optional `uptimeSeconds` arg) — semantically different
-  from an uptime *percentage*.
+- **Latest-snapshot for `health` / `metrics`:** still two `Metric.aggregate`
+  pipelines (`$match kind` → `$sort timestamp desc` → `$group by appId,
+  $first`) merged in app code. No history / `timeRange` on this route.
+- **`health` and `metrics` can independently be `null`** if that kind was
+  never reported.
+- **`health.instanceId` is the single latest health reporter**, not a
+  multi-instance rollup. Do **not** treat “health present ⇒ 1 instance”.
+- **`instanceCount`** = number of distinct `instanceId` values that have
+  **any** health or metric document with `timestamp` in the last
+  `instanceWindowSeconds`. Computed by aggregation, never inferred from
+  `health.instanceId` alone.
+- **`instances[]`** = optional drill-down: per-instance `lastSeen` (max
+  timestamp of any kind in the window), plus `status` / `uptimeSeconds`
+  from the latest **health** doc for that instance in the window when
+  present (else `null`). Sorted by `lastSeen` descending.
+- **No computed error rate / latency** on this route (still a future /
+  log-derived concern for LogPulse).
 - **No `serviceName`** — only `appId`. Display naming is a client concern.
+- **Backward compatible:** older clients that ignore `instanceCount` /
+  `instances` keep working.
 
-## 2. LogPulse's provisional contract (written without coordination)
+---
 
-`logpulse_analytics/lib/data/models/service_metrics_entry.dart` and
-`api_endpoints.dart` were written against a *guessed* contract:
+## 2. Canonical `health.status` vocabulary
 
-```
-GET /metrics/summary?timeRange=<optional>
-{ "data": [ { appId, serviceName, errorRate, avgLatency, uptime,
-              errorCount, instanceCount, lastReportedAt, metrics } ] }
-```
+Validated on **`POST /api/v1/metrics/health`** (`validation.js`).
 
-`parseServiceMetricsResponse()` is defensive (tries snake_case and
-camelCase variants, tolerates missing fields), but it was never going to
-line up with PR-24 because it assumes a flat record with computed
-aggregate fields, not a nested `health`/`metrics` merge of raw latest docs.
-
-## 3. Field-by-field diff
-
-| LogPulse expects | Real API has | Result today |
+| Value | Meaning | Suggested LogPulse mapping |
 |---|---|---|
-| `GET /metrics/summary` | `GET /metrics` (no `/summary`) | **404** — LogPulse's own 404-tolerant code path treats this as "no metrics yet" and silently returns `[]`. The dashboard has never actually surfaced real metrics data, even though the collector has been able to serve it since 2026-07-20. |
-| `serviceName` | not present | falls back to `appId` via `resolvedName` — fine, no fix needed |
-| `errorRate`, `avgLatency`, `errorCount` | not present anywhere | always `null` — these aren't computed server-side at all today |
-| `uptime` (implies %) | `health.uptimeSeconds` (nested, raw seconds) | always `null` — wrong shape *and* wrong unit even if path were fixed |
-| `instanceCount` | not present (route returns 1 doc per appId, not a distinct-instance count) | always `null` |
-| `lastReportedAt` | `metricsReportedAt` (top-level) | parser doesn't check this key name — would stay `null` even after the path fix |
-| `metrics` (custom map) | `metrics` (top-level, same key) | **this one actually matches** — once the path is fixed, custom metrics would flow through correctly |
-| `?timeRange=` query param | not supported (only optional `?appId=`) | silently ignored server-side — harmless but implies a capability that doesn't exist |
+| `ok` | Healthy | → healthy (green pulse) |
+| `degraded` | Running, impaired | → degraded |
+| `error` | Failing checks | → unhealthy |
+| `starting` | Optional warm-up | → degraded (until client has a dedicated state) |
+| `stopping` | Optional drain | → degraded (until client has a dedicated state) |
 
-## 4. Decision points for whoever picks this up next
+Unknown strings are rejected at write time (400). Reads may still show
+legacy rows if any were stored before validation expanded; clients should
+treat unknown status as degraded.
 
-1. **Path + key-name fix (mechanical, no server change needed).** Point
-   LogPulse at `/metrics` instead of `/metrics/summary`, and teach
-   `parseServiceMetricsResponse()` to read `health.status`,
-   `health.uptimeSeconds`, `health.instanceId`, and `metricsReportedAt`
-   instead of the flat/wrong-named fields. This alone would light up
-   `metrics` (custom map) and health status — the two fields that already
-   exist server-side.
-2. **`errorRate` / `avgLatency` / `errorCount`** — these were never part of
-   PR-24's scope. Either (a) leave them `null` forever and let LogPulse's
-   existing log-derived stats keep covering error rate / latency the way it
-   already does today, or (b) scope a v2 aggregation on the collector side
-   that computes these from `kind:metric` payload conventions (would
-   require the emitter side to agree on standard metric key names first —
-   `MetricsPayload` is deliberately free-form today).
-3. **`uptime` as a percentage vs. `uptimeSeconds`** — a percentage requires
-   a window and a definition of "down" that doesn't exist yet (Uptime Kuma
-   isn't stood up). Recommend LogPulse's UI show raw uptime duration
-   (formatted from `uptimeSeconds`) rather than inventing a percentage.
-4. **`instanceCount`** — would need a new aggregation (distinct
-   `instanceId` count per `appId` within a window) if this is wanted. Not
-   built. Worth doing only once more than one instance of an app is
-   actually reporting (AcademicX isn't wired up yet either).
-5. **`timeRange` query param** — drop from LogPulse's query builder, or
-   add real support server-side if historical metrics browsing (not just
-   latest snapshot) becomes a real requirement.
+---
 
-## 5. Recommended near-term scope
+## 3. Metrics **write** routes (unchanged threat model)
 
-Given nothing is actually consuming this data yet (AcademicX isn't wired to
-`@bevingh/telemetry`), the lowest-risk path is **decision point 1 only**:
-fix the path and field names in LogPulse so it correctly renders whatever
-health/metrics data does eventually arrive, and leave `errorRate`/
-`avgLatency`/`errorCount`/`instanceCount`/`uptime%` as known gaps rather
-than backfilling collector-side aggregation for data that doesn't exist yet.
+| Route | Auth |
+|---|---|
+| `POST /api/v1/metrics` | Per-app `metricsAuth` (`sk_live_` / `sk_test_`) + `appId` must match key subject |
+| `POST /api/v1/metrics/health` | Same |
+
+`collectorUrl` for `@bevingh/telemetry` is the **service origin only**
+(client appends `/api/v1/metrics` and `/api/v1/metrics/health`).
+
+---
+
+## 4. Field mapping notes for LogPulse
+
+| LogPulse concern | Use this |
+|---|---|
+| Path | `GET /api/v1/metrics` (not `/metrics/summary`) |
+| Health color | `health.status` (see vocabulary above) |
+| Process uptime duration | `health.uptimeSeconds` (raw seconds, not %) |
+| Custom free-form map | `metrics` |
+| Last metrics report | `metricsReportedAt` |
+| Multi-instance badge | `instanceCount` (hide when `null` or `≤ 1`) |
+| Drill-down | `instances[]` |
+
+Still **not** on this route: `errorRate`, `avgLatency`, `errorCount`
+aggregates (use log stats / future PR).
+
+---
+
+## 5. Indexes used
+
+From `src/models/Metric.js` (no new index required for this PR):
+
+- `{ appId: 1, kind: 1, timestamp: -1 }` — latest snapshot per kind
+- `{ appId: 1, instanceId: 1, timestamp: -1 }` — instance activity window
+- `{ appId: 1, timestamp: -1 }`, `{ kind: 1, timestamp: -1 }`, TTL on `timestamp`
+
+---
+
+## 6. Related P0: log timeseries (traffic charts)
+
+```
+GET /api/v1/logs/stats/timeseries?timeRange=last_24h&service=<optional>
+Auth: flat X-API-Key
+```
+
+| `timeRange` | Bucket |
+|---|---|
+| `last_hour` | 5 min |
+| `last_24h` (default) | 1 h |
+| `last_7d` | 12 h |
+| `last_30d` | 1 d |
+
+Optional absolute `from` / `to` (ISO-8601). Unknown `timeRange` → **400**.
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "timestamp": "2026-07-21T00:00:00.000Z",
+      "totalCount": 120,
+      "errorCount": 4
+    }
+  ],
+  "meta": {
+    "bucketMs": 3600000,
+    "timeRange": "last_24h",
+    "from": "…",
+    "to": "…"
+  }
+}
+```
+
+Buckets are ascending UTC bucket starts. Aggregation covers **all** matching
+logs in the window (not a 200-row sample).
+
+---
+
+## 7. History of this document
+
+- **PR-24:** first documented real read contract (latest snapshot only).
+- **P0 read (this PR):** `instanceCount` / `instances[]`, health vocabulary,
+  and log timeseries pointer for LogPulse Phase 18 consumers.

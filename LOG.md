@@ -208,3 +208,39 @@ Additive read path for the same `metrics` collection the POSTs already write to.
 - Dashboard UI
 - AcademicX wiring
 - History/time-range queries (this is latest-snapshot only)
+
+---
+
+## 2026-07-21 — P0 read API for LogPulse (timeseries + instanceCount)
+
+### What was built
+
+LogPulse Analytics already expects these surfaces. Server gaps closed so traffic charts and multi-instance badges can be honest.
+
+| # | Deliverable | Detail |
+|---|---|---|
+| 1 | `GET /api/v1/logs/stats/timeseries` | Bucketed `totalCount` / `errorCount` over all matching logs (not a 200-sample). Query: `timeRange` (`last_hour`/`last_24h`/`last_7d`/`last_30d`, default `last_24h`), optional `service`, optional absolute `from`/`to`. Unknown `timeRange` → **400**. Flat `authenticate`, no rate limit. |
+| 2 | `instanceCount` + `instances[]` on `GET /api/v1/metrics` | Distinct `instanceId`s with health/metric activity in `instanceWindowSeconds` (default 900). Latest health/metrics remain all-time latest snapshot. Count is never inferred from `health.instanceId` alone. |
+| 3 | Health status vocabulary | Write validation allows `ok` \| `degraded` \| `error` \| `starting` \| `stopping`. Documented in `docs/METRICS_READ_CONTRACT.md`. |
+
+### Files
+
+- `src/routes/logs.js` — timeseries route + `resolveTimeseriesWindow` / `fetchLogTimeseries`
+- `src/routes/metrics.js` — `fetchInstanceStats`, `attachInstanceStats`, query param `instanceWindowSeconds`
+- `src/middleware/validation.js` — expanded health status enum
+- `docs/METRICS_READ_CONTRACT.md` — rewritten for P0 contract
+- Tests: `tests/logsTimeseries.test.js`, updated `tests/metricsRead.test.js`
+
+### Out of scope (next CLS slice)
+
+- Per-service `errorRate` / `avgDuration` on summary
+- Log list `total`
+- Error groups / services catalog
+- LogPulse client wiring (LP consumers after this lands)
+
+### Acceptance notes
+
+- Timeseries aggregates the full match window (Mongo `$group` buckets).
+- Multi-instance: post health from 2–3 `instanceId`s → `instanceCount ≥ 2`.
+- Auth: same flat key as other log/metrics reads; missing/wrong key → 401 via existing middleware.
+- PR-24 fields (`appId`, `health`, `metrics`, `metricsReportedAt`) unchanged for older clients; new fields additive.

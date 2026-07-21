@@ -28,9 +28,12 @@ const logEntrySchema = Joi.object({
   metadata: Joi.object().optional()
 });
 
+// Canonical health.status vocabulary (see docs/METRICS_READ_CONTRACT.md)
+const HEALTH_STATUS_VALUES = ['ok', 'degraded', 'error', 'starting', 'stopping'];
+
 const healthReportSchema = Joi.object({
   appId: Joi.string().required(),
-  status: Joi.string().valid('ok').required(),
+  status: Joi.string().valid(...HEALTH_STATUS_VALUES).required(),
   timestamp: Joi.date().iso().required(),
   instanceId: Joi.string().required(),
   uptimeSeconds: Joi.number().optional()
@@ -99,5 +102,6 @@ module.exports = {
   validateMetricsReport,
   logEntrySchema,
   healthReportSchema,
-  metricsReportSchema
+  metricsReportSchema,
+  HEALTH_STATUS_VALUES
 };
