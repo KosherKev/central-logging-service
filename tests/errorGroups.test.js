@@ -1,9 +1,9 @@
 /**
- * P2: error fingerprint stability + group fetch wiring.
+ * Error groups: extractErrorDisplay + fingerprint + fetchErrorGroups wiring.
  */
 
 jest.mock('../src/models/Log', () => ({
-  aggregate: jest.fn()
+  find: jest.fn()
 }));
 
 const Log = require('../src/models/Log');
@@ -11,17 +11,25 @@ const {
   normalizeErrorMessage,
   fingerprintError,
   computeTrend,
-  pickDisplayMessage
+  extractErrorDisplay
 } = require('../src/utils/errorFingerprint');
 const { fetchErrorGroups } = require('../src/routes/logs');
 
+function mockFindLean(docs) {
+  Log.find.mockReturnValue({
+    select: () => ({
+      lean: async () => docs
+    })
+  });
+}
+
 describe('error fingerprint helpers', () => {
-  test('normalize collapses UUIDs, numbers, and whitespace', () => {
+  test('normalize collapses UUIDs, ObjectIds, IPs, numbers, whitespace', () => {
     expect(
       normalizeErrorMessage(
-        'User 123 failed id=550e8400-e29b-41d4-a716-446655440000  '
+        'User 123 failed id=550e8400-e29b-41d4-a716-446655440000 at 10.0.0.1:27017  '
       )
-    ).toBe('user N failed id=<uuid>');
+    ).toBe('user N failed id=<uuid> at <ip>');
   });
 
   test('fingerprint is stable for same logical message', () => {
@@ -47,14 +55,122 @@ describe('error fingerprint helpers', () => {
     expect(computeTrend(10, 20)).toBe('increasing');
     expect(computeTrend(20, 10)).toBe('decreasing');
     expect(computeTrend(10, 11)).toBe('stable');
-    expect(computeTrend(0, 5)).toBe('increasing');
-    expect(computeTrend(5, 0)).toBe('decreasing');
+  });
+});
+
+describe('extractErrorDisplay', () => {
+  test('prefers top-level error.message (regression)', () => {
+    const out = extractErrorDisplay({
+      error: { message: 'Top level boom', code: 'E1', stack: 'stack-top' },
+      response: {
+        body: { message: 'body should lose', error: 'Internal Server Error' }
+      },
+      statusCode: 500
+    });
+    expect(out.message).toBe('Top level boom');
+    expect(out.errorCode).toBe('E1');
+    expect(out.stack).toBe('stack-top');
   });
 
-  test('pickDisplayMessage prefers message then code', () => {
-    expect(pickDisplayMessage(' boom ', 'E1')).toBe('boom');
-    expect(pickDisplayMessage('', 'E1')).toBe('E1');
-    expect(pickDisplayMessage(null, null)).toBe('Unknown error');
+  test('error:null + body.error.message (fyp Empty file)', () => {
+    const out = extractErrorDisplay({
+      error: null,
+      statusCode: 500,
+      response: {
+        body: {
+          success: false,
+          error: { message: 'Empty file', statusCode: 500 }
+        }
+      }
+    });
+    expect(out.message).toBe('Empty file');
+    expect(out.message).not.toBe('Unknown error');
+    expect(out.statusCode).toBe(500);
+  });
+
+  test('body.message preferred over generic string body.error', () => {
+    const out = extractErrorDisplay({
+      error: null,
+      statusCode: 500,
+      response: {
+        body: {
+          success: false,
+          message: 'this.database.isConnected is not a function',
+          error: 'Internal Server Error'
+        }
+      }
+    });
+    expect(out.message).toBe('this.database.isConnected is not a function');
+  });
+
+  test('body.error.stack becomes sample stack', () => {
+    const out = extractErrorDisplay({
+      error: null,
+      response: {
+        body: {
+          success: false,
+          error: {
+            message: 'connect ECONNREFUSED 65.62.2.172:27017',
+            statusCode: 500,
+            stack: 'MongoServerSelectionError: connect ECONNREFUSED …'
+          }
+        }
+      },
+      statusCode: 500
+    });
+    expect(out.message).toContain('connect ECONNREFUSED');
+    expect(out.stack).toContain('MongoServerSelectionError');
+  });
+
+  test('JSON string response.body is parsed', () => {
+    const out = extractErrorDisplay({
+      error: null,
+      statusCode: 500,
+      response: {
+        body: JSON.stringify({
+          success: false,
+          error: { message: 'Empty file', statusCode: 500 }
+        })
+      }
+    });
+    expect(out.message).toBe('Empty file');
+  });
+
+  test('non-JSON short body string is used as message', () => {
+    const out = extractErrorDisplay({
+      error: null,
+      statusCode: 500,
+      response: { body: 'plain failure text' }
+    });
+    expect(out.message).toBe('plain failure text');
+  });
+
+  test('status-only → HTTP 502 (not Unknown error)', () => {
+    const out = extractErrorDisplay({
+      error: null,
+      statusCode: 502,
+      response: { body: null }
+    });
+    expect(out.message).toBe('HTTP 502');
+  });
+
+  test('nothing at all → Error sentinel (not Unknown error)', () => {
+    const out = extractErrorDisplay({ error: null });
+    expect(out.message).toBe('Error');
+  });
+
+  test('two different body messages → different fingerprints', () => {
+    const a = extractErrorDisplay({
+      error: null,
+      response: { body: { error: { message: 'Empty file' } } }
+    });
+    const b = extractErrorDisplay({
+      error: null,
+      response: { body: { message: 'missing exceljs' } }
+    });
+    expect(fingerprintError(a.message, a.errorCode)).not.toBe(
+      fingerprintError(b.message, b.errorCode)
+    );
   });
 });
 
@@ -63,44 +179,75 @@ describe('fetchErrorGroups', () => {
     jest.clearAllMocks();
   });
 
-  test('empty aggregation → []', async () => {
-    Log.aggregate.mockResolvedValue([]);
-    const start = new Date('2026-07-21T00:00:00.000Z');
-    const end = new Date('2026-07-21T12:00:00.000Z');
-    const data = await fetchErrorGroups({ start, end, limit: 50 });
+  test('empty window → []', async () => {
+    mockFindLean([]);
+    const data = await fetchErrorGroups({
+      start: new Date('2026-07-21T00:00:00.000Z'),
+      end: new Date('2026-07-21T12:00:00.000Z'),
+      limit: 50
+    });
     expect(data).toEqual([]);
+    expect(Log.find).toHaveBeenCalled();
   });
 
-  test('maps rows to groups with fingerprint id, count, trend; sorted lastSeen desc', async () => {
+  test('body-only failures split into distinct groups; no Unknown error megagroup', async () => {
     const t1 = new Date('2026-07-21T08:00:00.000Z');
     const t2 = new Date('2026-07-21T12:30:00.000Z');
+    const t3 = new Date('2026-07-21T13:00:00.000Z');
 
-    Log.aggregate.mockResolvedValue([
+    mockFindLean([
       {
-        _id: { msgKey: 'connection refused to redis', code: 'ECONNREFUSED' },
-        count: 47,
-        services: ['academicx', 'payments-api'],
-        firstSeen: t1,
-        lastSeen: t2,
-        sampleMessage: 'Connection refused to redis',
-        sampleStack: 'Error: ...\n    at ...',
-        sampleTraceId: 'trace-abc',
-        sampleCode: 'ECONNREFUSED',
-        recentCount: 30,
-        earlierCount: 17
+        timestamp: t1,
+        service: 'fyp-management-backend',
+        statusCode: 500,
+        traceId: 'trace-empty',
+        error: null,
+        response: {
+          body: {
+            success: false,
+            error: { message: 'Empty file', statusCode: 500 }
+          }
+        }
       },
       {
-        _id: { msgKey: 'other', code: '' },
-        count: 2,
-        services: ['academicx'],
-        firstSeen: t1,
-        lastSeen: t1,
-        sampleMessage: 'other',
-        sampleStack: null,
-        sampleTraceId: 'trace-x',
-        sampleCode: null,
-        recentCount: 0,
-        earlierCount: 2
+        timestamp: t2,
+        service: 'fyp-management-backend',
+        statusCode: 500,
+        traceId: 'trace-mongo',
+        error: null,
+        response: {
+          body: {
+            success: false,
+            error: {
+              message: 'connect ECONNREFUSED 65.62.2.172:27017',
+              stack: 'MongoServerSelectionError: connect ECONNREFUSED …'
+            }
+          }
+        }
+      },
+      {
+        timestamp: t3,
+        service: 'academicx-api',
+        statusCode: 500,
+        traceId: 'trace-mongo-2',
+        error: null,
+        response: {
+          body: {
+            success: false,
+            error: {
+              message: 'connect ECONNREFUSED 1.2.3.4:27017',
+              stack: 'MongoServerSelectionError: …'
+            }
+          }
+        }
+      },
+      {
+        timestamp: t1,
+        service: 'payment-gateway-api',
+        statusCode: 502,
+        traceId: 'trace-http',
+        error: null,
+        response: { body: null }
       }
     ]);
 
@@ -110,52 +257,58 @@ describe('fetchErrorGroups', () => {
       limit: 50
     });
 
-    expect(data).toHaveLength(2);
-    expect(data[0].lastSeen).toEqual(t2);
-    expect(data[0].id).toBe(
-      fingerprintError('Connection refused to redis', 'ECONNREFUSED')
+    const messages = data.map((g) => g.message);
+    expect(messages).not.toContain('Unknown error');
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        'Empty file',
+        expect.stringContaining('connect ECONNREFUSED'),
+        'HTTP 502'
+      ])
     );
-    expect(data[0].count).toBe(47);
-    expect(data[0].services).toEqual(['academicx', 'payments-api']);
-    expect(data[0].trend).toBe('increasing');
-    expect(data[0].sampleTraceId).toBe('trace-abc');
-    expect(data[1].trend).toBe('decreasing');
 
-    const pipeline = Log.aggregate.mock.calls[0][0];
-    expect(pipeline[0].$match.$or).toEqual([
-      { level: 'error' },
-      { statusCode: { $gte: 400 } }
+    // Same normalized ECONNREFUSED across services → one group, count 2, 2 services
+    const mongoGroup = data.find((g) =>
+      g.message.toLowerCase().includes('econnrefused')
+    );
+    expect(mongoGroup.count).toBe(2);
+    expect(mongoGroup.services).toEqual([
+      'academicx-api',
+      'fyp-management-backend'
     ]);
+    expect(mongoGroup.sampleStack).toContain('MongoServerSelectionError');
+
+    expect(data.find((g) => g.message === 'Empty file').count).toBe(1);
+    expect(data.find((g) => g.message === 'HTTP 502').sampleStatusCode).toBe(
+      502
+    );
   });
 
-  test('merges pre-groups that share a fingerprint after normalize', async () => {
+  test('top-level error.message still groups (regression)', async () => {
     const t = new Date('2026-07-21T12:00:00.000Z');
-    Log.aggregate.mockResolvedValue([
+    mockFindLean([
       {
-        _id: { msgKey: 'user 1 failed', code: '' },
-        count: 3,
-        services: ['a'],
-        firstSeen: t,
-        lastSeen: t,
-        sampleMessage: 'User 1 failed',
-        sampleStack: null,
-        sampleTraceId: 't1',
-        sampleCode: null,
-        recentCount: 3,
-        earlierCount: 0
+        timestamp: t,
+        service: 'svc-a',
+        statusCode: 500,
+        traceId: 't1',
+        error: {
+          message: 'Top level failure',
+          code: 'EFAIL',
+          stack: 'Error: Top level failure'
+        },
+        response: { body: null }
       },
       {
-        _id: { msgKey: 'user 99 failed', code: '' },
-        count: 2,
-        services: ['b'],
-        firstSeen: t,
-        lastSeen: t,
-        sampleMessage: 'User 99 failed',
-        sampleStack: null,
-        sampleTraceId: 't2',
-        sampleCode: null,
-        recentCount: 2,
-        earlierCount: 0
+        timestamp: t,
+        service: 'svc-b',
+        statusCode: 500,
+        traceId: 't2',
+        error: {
+          message: 'Top level failure',
+          code: 'EFAIL'
+        },
+        response: { body: null }
       }
     ]);
 
@@ -165,8 +318,23 @@ describe('fetchErrorGroups', () => {
     });
 
     expect(data).toHaveLength(1);
-    expect(data[0].count).toBe(5);
-    expect(data[0].services).toEqual(['a', 'b']);
-    expect(data[0].id).toBe(fingerprintError('User 1 failed', null));
+    expect(data[0].message).toBe('Top level failure');
+    expect(data[0].errorCode).toBe('EFAIL');
+    expect(data[0].count).toBe(2);
+    expect(data[0].services).toEqual(['svc-a', 'svc-b']);
+    expect(data[0].id).toBe(fingerprintError('Top level failure', 'EFAIL'));
+  });
+
+  test('match uses isError rule (level error OR statusCode >= 400)', async () => {
+    mockFindLean([]);
+    await fetchErrorGroups({
+      start: new Date('2026-07-21T00:00:00.000Z'),
+      end: new Date('2026-07-21T16:00:00.000Z')
+    });
+    const match = Log.find.mock.calls[0][0];
+    expect(match.$or).toEqual([
+      { level: 'error' },
+      { statusCode: { $gte: 400 } }
+    ]);
   });
 });

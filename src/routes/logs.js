@@ -10,7 +10,7 @@ const {
   normalizeErrorMessage,
   fingerprintError,
   computeTrend,
-  pickDisplayMessage
+  extractErrorDisplay
 } = require('../utils/errorFingerprint');
 
 /**
@@ -481,7 +481,12 @@ const ERROR_LOG_MATCH = {
 };
 
 /**
- * Aggregate error/status>=400 logs into fingerprint groups for the Errors tab.
+ * Group error/status>=400 logs for the Errors tab.
+ *
+ * Message extraction uses extractErrorDisplay() (top-level error → response.body
+ * → HTTP status). Fingerprinting happens in application code so body-only
+ * failures do not collapse into one "Unknown error" megagroup.
+ *
  * Sorted by lastSeen desc. Empty window → [].
  */
 async function fetchErrorGroups({ start, end, service, limit = 50 }) {
@@ -494,53 +499,27 @@ async function fetchErrorGroups({ start, end, service, limit = 50 }) {
   };
   if (service) matchQuery.service = service;
 
-  const rows = await Log.aggregate([
-    { $match: matchQuery },
-    {
-      $addFields: {
-        _errorMessage: {
-          $ifNull: ['$error.message', 'Unknown error']
-        },
-        _errorCode: { $ifNull: ['$error.code', null] }
-      }
-    },
-    // Ascending sort so $last in $group is the chronologically latest sample
-    { $sort: { timestamp: 1 } },
-    {
-      $group: {
-        _id: {
-          // Pre-group by truncated lower message + code; re-merge by full fingerprint in app
-          msgKey: {
-            $substrCP: [{ $toLower: '$_errorMessage' }, 0, 200]
-          },
-          code: { $ifNull: ['$_errorCode', ''] }
-        },
-        count: { $sum: 1 },
-        services: { $addToSet: '$service' },
-        firstSeen: { $min: '$timestamp' },
-        lastSeen: { $max: '$timestamp' },
-        sampleMessage: { $last: '$_errorMessage' },
-        sampleStack: { $last: '$error.stack' },
-        sampleTraceId: { $last: '$traceId' },
-        sampleCode: { $last: '$_errorCode' },
-        recentCount: {
-          $sum: { $cond: [{ $gte: ['$timestamp', mid] }, 1, 0] }
-        },
-        earlierCount: {
-          $sum: { $cond: [{ $lt: ['$timestamp', mid] }, 1, 0] }
-        }
-      }
-    },
-    { $sort: { lastSeen: -1 } }
-  ]);
+  // Project only fields needed for extraction + grouping (all matching logs in window)
+  const docs = await Log.find(matchQuery)
+    .select({
+      timestamp: 1,
+      service: 1,
+      statusCode: 1,
+      traceId: 1,
+      error: 1,
+      'response.body': 1
+    })
+    .lean();
 
-  // Merge Mongo pre-groups that share the same fingerprint (normalize collapses UUIDs/numbers)
   const byFp = new Map();
-  for (const row of rows) {
-    const message = pickDisplayMessage(row.sampleMessage, row.sampleCode);
-    const errorCode =
-      row.sampleCode != null && row.sampleCode !== '' ? row.sampleCode : null;
+
+  for (const doc of docs) {
+    const extracted = extractErrorDisplay(doc);
+    const message = extracted.message;
+    const errorCode = extracted.errorCode;
     const id = fingerprintError(message, errorCode);
+    const ts = doc.timestamp ? new Date(doc.timestamp) : new Date(0);
+    const isRecent = ts.getTime() >= mid.getTime();
 
     const existing = byFp.get(id);
     if (!existing) {
@@ -548,31 +527,35 @@ async function fetchErrorGroups({ start, end, service, limit = 50 }) {
         id,
         message,
         errorCode,
-        count: row.count,
-        services: new Set((row.services || []).filter(Boolean)),
-        firstSeen: row.firstSeen,
-        lastSeen: row.lastSeen,
-        sampleStack: row.sampleStack || null,
-        sampleTraceId: row.sampleTraceId || null,
-        recentCount: row.recentCount || 0,
-        earlierCount: row.earlierCount || 0
+        count: 1,
+        services: new Set(doc.service ? [doc.service] : []),
+        firstSeen: ts,
+        lastSeen: ts,
+        sampleStack: extracted.stack || null,
+        sampleTraceId: doc.traceId || null,
+        sampleStatusCode: extracted.statusCode,
+        recentCount: isRecent ? 1 : 0,
+        earlierCount: isRecent ? 0 : 1
       });
       continue;
     }
 
-    existing.count += row.count;
-    existing.recentCount += row.recentCount || 0;
-    existing.earlierCount += row.earlierCount || 0;
-    for (const s of row.services || []) {
-      if (s) existing.services.add(s);
-    }
-    if (row.firstSeen < existing.firstSeen) existing.firstSeen = row.firstSeen;
-    if (row.lastSeen > existing.lastSeen) {
-      existing.lastSeen = row.lastSeen;
+    existing.count += 1;
+    if (isRecent) existing.recentCount += 1;
+    else existing.earlierCount += 1;
+    if (doc.service) existing.services.add(doc.service);
+    if (ts < existing.firstSeen) existing.firstSeen = ts;
+    if (ts >= existing.lastSeen) {
+      // Prefer newest sample for message/stack/trace (same fingerprint)
+      existing.lastSeen = ts;
       existing.message = message;
       existing.errorCode = errorCode;
-      existing.sampleStack = row.sampleStack || existing.sampleStack;
-      existing.sampleTraceId = row.sampleTraceId || existing.sampleTraceId;
+      existing.sampleStack = extracted.stack || existing.sampleStack;
+      existing.sampleTraceId = doc.traceId || existing.sampleTraceId;
+      existing.sampleStatusCode =
+        extracted.statusCode != null
+          ? extracted.statusCode
+          : existing.sampleStatusCode;
     }
   }
 
@@ -580,13 +563,15 @@ async function fetchErrorGroups({ start, end, service, limit = 50 }) {
     .map((g) => ({
       id: g.id,
       message: g.message,
-      ...(g.errorCode != null ? { errorCode: g.errorCode } : { errorCode: null }),
+      errorCode: g.errorCode != null ? g.errorCode : null,
       count: g.count,
       services: Array.from(g.services).sort(),
       firstSeen: g.firstSeen,
       lastSeen: g.lastSeen,
       sampleStack: g.sampleStack,
       sampleTraceId: g.sampleTraceId,
+      sampleStatusCode:
+        g.sampleStatusCode != null ? g.sampleStatusCode : null,
       trend: computeTrend(g.earlierCount, g.recentCount)
     }))
     .sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen))
@@ -650,3 +635,4 @@ module.exports.ERROR_LOG_MATCH = ERROR_LOG_MATCH;
 module.exports.normalizeErrorMessage = normalizeErrorMessage;
 module.exports.fingerprintError = fingerprintError;
 module.exports.computeTrend = computeTrend;
+module.exports.extractErrorDisplay = extractErrorDisplay;

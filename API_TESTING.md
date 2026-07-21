@@ -330,20 +330,23 @@ curl "http://localhost:8080/api/v1/logs/errors/groups?timeRange=last_24h&limit=5
 
 Inclusion: `level === 'error'` OR `statusCode >= 400`. Empty window → `"data": []`. Sorted by `lastSeen` desc.
 
+**Message source:** top-level `error.message`, else `response.body` (JSON nested `error.message` / `message` / string `error`), else `HTTP ${statusCode}`. Producers that leave `error: null` and put text in `response.body` are supported — they no longer collapse into one `"Unknown error"` megagroup.
+
 ```json
 {
   "success": true,
   "data": [
     {
       "id": "fp_a1b2c3d4e5f6",
-      "message": "Connection refused to redis",
-      "errorCode": "ECONNREFUSED",
-      "count": 47,
-      "services": ["academicx", "payments-api"],
+      "message": "connect ECONNREFUSED 65.62.2.172:27017",
+      "errorCode": null,
+      "count": 3,
+      "services": ["fyp-management-backend"],
       "firstSeen": "2026-07-21T08:00:00.000Z",
       "lastSeen": "2026-07-21T12:30:00.000Z",
-      "sampleStack": "Error: ...",
+      "sampleStack": "MongoServerSelectionError: connect ECONNREFUSED …",
       "sampleTraceId": "trace-abc",
+      "sampleStatusCode": 500,
       "trend": "increasing"
     }
   ]

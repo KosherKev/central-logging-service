@@ -284,6 +284,25 @@ LogPulse Analytics already expects these surfaces. Server gaps closed so traffic
 
 ---
 
+## 2026-07-21 — Fix error-groups message extraction (Unknown error megagroup)
+
+### Bug
+
+`GET /api/v1/logs/errors/groups` fingerprinted only `error.message`, defaulting to `"Unknown error"`. Producers (academicx, fyp, payment-gateway) often set `error: null` and put the real text in `response.body` → one megagroup (~247 count).
+
+### Fix
+
+- `extractErrorDisplay(log)` in `src/utils/errorFingerprint.js`: top-level `error` → parse `response.body` (object or JSON string) → `HTTP ${statusCode}` / `"Error"`.
+- Grouping runs in app code over matched logs (`Log.find` + project) so body fields are available; fingerprint uses extracted message + code.
+- Optional `sampleStatusCode` on each group; `sampleStack` from body when present.
+- Never default fingerprint input to literal `"Unknown error"` when status/body yield text.
+
+### Tests
+
+`tests/errorGroups.test.js` — extractor fixtures (Empty file, body.message, ECONNREFUSED + stack, HTTP 502) + multi-group fetch.
+
+---
+
 ## 2026-07-21 — HTTP purge for old logs (cron-job.org)
 
 ### What was built
