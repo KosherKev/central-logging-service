@@ -282,6 +282,22 @@ LogPulse Analytics already expects these surfaces. Server gaps closed so traffic
 - Stage timings / timeline spans (P3)
 - Webhooks/notifications
 
+---
+
+## 2026-07-21 — HTTP purge for old logs (cron-job.org)
+
+### What was built
+
+- `POST /jobs/purge-logs` (alias `POST /jobs/archive`) — flat `X-API-Key` auth, runs existing `archiveOldLogs` job.
+- Deletes logs with `timestamp < now - HOT_STORAGE_DAYS` (default 7). Returns `deletedCount` + `cutoffDate`.
+- Standalone still works: `node src/jobs/archiveOldLogs.js`.
+- README documents full **cron-job.org** setup (POST + `X-API-Key` header, daily schedule).
+
+### Not in this change
+
+- Metrics purge (TTL only)
+- GCS cold archive upload (job is delete-only today)
+
 ### Acceptance notes
 
 - Timeseries aggregates the full match window (Mongo `$group` buckets).

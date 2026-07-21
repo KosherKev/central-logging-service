@@ -37,6 +37,31 @@ Use the printed raw key as `X-API-Key`. The key is bound to one `appId` (`subjec
 
 ---
 
+## 0. Purge Old Logs (cron-job.org)
+
+Deletes logs older than `HOT_STORAGE_DAYS` (default 7). Use a **flat** API key (`API_KEYS`), not a per-app `sk_live_` metrics key.
+
+```bash
+curl -X POST "http://localhost:8080/jobs/purge-logs" \
+  -H "X-API-Key: dev-key-123"
+```
+
+```json
+{
+  "success": true,
+  "message": "Purged 42 logs older than 7 days",
+  "data": {
+    "deletedCount": 42,
+    "cutoffDate": "2026-07-14T02:00:00.000Z",
+    "hotStorageDays": 7
+  }
+}
+```
+
+Alias: `POST /jobs/archive`. See README for cron-job.org setup.
+
+---
+
 ## 1. Health Check
 
 **No authentication required**

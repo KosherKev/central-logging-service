@@ -3,44 +3,50 @@ const config = require('../config');
 const logger = require('../utils/logger');
 
 /**
- * Purge old logs from MongoDB
- * Run daily via cron or Cloud Scheduler
+ * Purge old logs from MongoDB (hot retention window).
+ * Run daily via cron-job.org → POST /jobs/purge-logs, or:
+ *   node src/jobs/archiveOldLogs.js
+ *
+ * Cutoff = now - HOT_STORAGE_DAYS (default 7).
+ * Metrics TTL is handled separately by MongoDB (Metric model).
+ *
+ * @returns {{ cutoffDate: Date, deletedCount: number, hotStorageDays: number }}
  */
 async function archiveOldLogs() {
-  try {
-    logger.info('Starting log purge process');
-    
-    // Calculate cutoff date
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - config.retention.hotStorageDays);
-    
-    logger.info(`Deleting logs older than ${cutoffDate.toISOString()}`);
-    
-    const deleteResult = await Log.deleteMany({
-      timestamp: { $lt: cutoffDate }
-    });
-    logger.info(`Deleted ${deleteResult.deletedCount} logs from MongoDB`);
-    logger.info('Log purge process completed successfully');
-    
-  } catch (error) {
-    logger.error('Error during log purge', {
-      error: {
-        message: error.message,
-        stack: error.stack
-      }
-    });
-    throw error;
-  }
+  logger.info('Starting log purge process');
+
+  const hotStorageDays = config.retention.hotStorageDays || 7;
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - hotStorageDays);
+
+  logger.info(`Deleting logs older than ${cutoffDate.toISOString()} (${hotStorageDays}d retention)`);
+
+  const deleteResult = await Log.deleteMany({
+    timestamp: { $lt: cutoffDate }
+  });
+
+  const deletedCount = deleteResult.deletedCount || 0;
+  logger.info(`Deleted ${deletedCount} logs from MongoDB`);
+  logger.info('Log purge process completed successfully');
+
+  return {
+    cutoffDate,
+    deletedCount,
+    hotStorageDays
+  };
 }
 
-// Allow running as a standalone script
+// Allow running as a standalone script (local / one-off)
 if (require.main === module) {
   const connectDB = require('../config/database');
-  
+
   (async () => {
     try {
       await connectDB();
-      await archiveOldLogs();
+      const result = await archiveOldLogs();
+      console.log(
+        `Purged ${result.deletedCount} logs older than ${result.cutoffDate.toISOString()}`
+      );
       process.exit(0);
     } catch (error) {
       logger.error('Failed to run archive job', {

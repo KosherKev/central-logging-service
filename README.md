@@ -421,22 +421,66 @@ gcloud run deploy central-logging-service \
   --set-env-vars MONGODB_URI=your-mongodb-uri,API_KEYS=your-keys
 ```
 
-## Log Retention & Archiving
+## Log Retention & Purging
 
-The service automatically:
-- Keeps logs in MongoDB for 7 days (configurable)
-- Archives logs to Google Cloud Storage after 7 days
-- Deletes logs from GCS after 90 days (configurable)
+Logs older than **`HOT_STORAGE_DAYS`** (default **7**) can be deleted with an explicit purge job. MongoDB also has a TTL index on `timestamp` as a backup; the HTTP job is the reliable way to clear volume on a schedule.
 
-Run the archive job:
+### One-off (local / shell)
+
 ```bash
+# requires MONGODB_URI / HOT_STORAGE_DAYS in env
 node src/jobs/archiveOldLogs.js
 ```
 
-Schedule with Cloud Scheduler or cron:
-```bash
-0 2 * * * node src/jobs/archiveOldLogs.js
+### HTTP (for cron-job.org)
+
 ```
+POST /jobs/purge-logs
+Header: X-API-Key: <your flat API_KEYS value>
+```
+
+Alias: `POST /jobs/archive` (same handler).
+
+**Example response:**
+```json
+{
+  "success": true,
+  "message": "Purged 1234 logs older than 7 days",
+  "data": {
+    "deletedCount": 1234,
+    "cutoffDate": "2026-07-14T02:00:00.000Z",
+    "hotStorageDays": 7
+  }
+}
+```
+
+### Set up on [cron-job.org](https://cron-job.org)
+
+1. Deploy this service and note the public URL (e.g. `https://central-logging-service-xxxx.run.app`).
+2. Confirm purge works once:
+   ```bash
+   curl -X POST "https://YOUR_SERVICE_URL/jobs/purge-logs" \
+     -H "X-API-Key: YOUR_API_KEY"
+   ```
+3. Sign in at https://cron-job.org → **Create cronjob**.
+4. Fill in:
+   | Field | Value |
+   |---|---|
+   | **Title** | `CLS purge old logs` |
+   | **URL** | `https://YOUR_SERVICE_URL/jobs/purge-logs` |
+   | **Schedule** | Daily — e.g. every day at **02:00** (UTC or your preferred timezone) |
+   | **Request method** | **POST** |
+   | **Request timeout** | 30–60s (large deletes may need the high end) |
+5. **Request headers** → add:
+   | Header | Value |
+   |---|---|
+   | `X-API-Key` | same value as in `API_KEYS` (one of the flat keys) |
+6. Optional: enable email/notifications on non-2xx so you notice failures.
+7. Save → **Run now** once and check the execution history + service logs for `Deleted N logs`.
+
+**Retention knob:** set `HOT_STORAGE_DAYS=7` (or whatever you want) on the Cloud Run / host env. The purge deletes documents with `timestamp < now - HOT_STORAGE_DAYS`.
+
+**Not purged by this job:** metrics collection (uses its own MongoDB TTL). Metrics write keys / per-app keys are unrelated — use a **flat** `API_KEYS` secret for this endpoint.
 
 ## Security
 

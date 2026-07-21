@@ -66,8 +66,7 @@ gcloud run deploy ${SERVICE_NAME} \
   --min-instances 0 \
   --max-instances 10 \
   --timeout 60 \
-  --set-env-vars "NODE_ENV=production" \
-  --set-env-vars "PORT=8080"
+  --update-env-vars "NODE_ENV=production,PORT=8080"
 
 # Get service URL
 SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
@@ -80,9 +79,10 @@ echo "✅ Deployment complete!"
 echo "🌐 Service URL: ${SERVICE_URL}"
 echo ""
 echo "Next steps:"
-echo "1. Set environment variables (MongoDB URI, API keys, etc.):"
+echo "1. Set environment variables (MongoDB URI, API keys, etc.) — use --update-env-vars,"
+echo "   not --set-env-vars, so you don't wipe whatever is already set on the service:"
 echo "   gcloud run services update ${SERVICE_NAME} --region ${REGION} \\"
-echo "     --set-env-vars MONGODB_URI=your-mongodb-uri,API_KEYS=your-keys"
+echo "     --update-env-vars MONGODB_URI=your-mongodb-uri,API_KEYS=your-keys"
 echo ""
 echo "2. Test the service:"
 echo "   curl ${SERVICE_URL}/health"
