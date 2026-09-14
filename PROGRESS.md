@@ -144,7 +144,7 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
 - **CLS-10** — `client/` (the log-shipper library used by producer apps) is a
   standalone folder with its own `package.json`, not published/versioned as an
   installable package — must be manually copied into each consuming app.
-- **CLS-13 (verified 2026-09-14, cross-repo, high impact)** — `GET
+- ~~**CLS-13**~~ — **fixed 2026-09-14** (`70a93f3`). Was: `GET
   /logs/stats/summary` (`src/routes/logs.js`) destructures only `service`, `from`,
   `to` from the query string — it never reads `timeRange`, unlike its three sibling
   routes (`/logs/stats/timeseries`, `/logs/errors/groups`, `/services`), which all
@@ -160,18 +160,22 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
   the review: the Dashboard's Service Health list showed a service (`unified-
   voting-api`) that the Services catalog page (`/services`, correctly time-scoped)
   did not — the former is all-time, the latter is genuinely last-24h.
-  **Fix**: have `/logs/stats/summary`'s handler call `resolveTimeseriesWindow(req.query)`
-  (already exported from this same module) and fold the resolved `start`/`end` into
-  `matchQuery`, matching the pattern its three siblings already use.
-- **CLS-12 (verified 2026-09-14, cross-repo)** — `GET /api/v1/logs` only accepts a
-  `q` query param for regex search (`src/routes/logs.js:65-116`). LogPulse Analytics'
-  client sends `search=<term>` instead (`ApiEndpoints.buildLogsQuery`), which this
-  route silently ignores — the search falls through to the default unfiltered query.
-  Confirmed by reading both repos' current code, not from docs. Affects three UI
-  entry points client-side (see LogPulse's `PROGRESS.md` KL-2609-search). Recommend
-  fixing here by accepting `search` as an alias for `q` (`const { q, search, ... } =
-  req.query;` then `const term = q || search;`) rather than changing the client,
-  since that's a strictly additive, backward-compatible change.
+  Fixed by calling `resolveTimeseriesWindow(req.query)` (already exported from this
+  same module) and folding the resolved `start`/`end` into `matchQuery`, matching
+  the pattern its three siblings already used. Also added a `$sort: {totalRequests:
+  -1}` to the `byService` facet — `$group` has no ordering guarantee, which was
+  visibly reshuffling LogPulse's Service Health list between identical-window
+  refreshes. **Not yet deployed or test-suite-verified** — this sandbox has no
+  `node_modules` (needs the private `@bevingh/auth` package, see CLS-02), so this
+  was verified by `node --check` (syntax) and careful reading against the 3 working
+  sibling routes, not by running Jest or a real server. Needs a deploy + smoke test.
+- ~~**CLS-12**~~ — **fixed 2026-09-14** (`70a93f3`). Was: `GET /api/v1/logs` only
+  accepted a `q` query param for regex search (`src/routes/logs.js:65-116`).
+  LogPulse Analytics' client sends `search=<term>` instead
+  (`ApiEndpoints.buildLogsQuery`), which this route silently ignored — the search
+  fell through to the default unfiltered query. Fixed by accepting `search` as an
+  alias for `q` (additive, backward-compatible — `q` stays canonical for any other
+  caller). Same not-yet-deployed caveat as CLS-13 above.
 - **CLS-11** — No deployed-URL or live-production confirmation exists in any doc;
   `DEPLOYMENT.md`/`README.md` use placeholder values (`YOUR_PROJECT_ID`,
   `YOUR_SERVICE_URL`) throughout. The `linux/amd64` fix commit implies at least one
@@ -179,11 +183,9 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
 
 ## Next Steps
 
-**0. New, high priority — fix CLS-13.** `/logs/stats/summary` ignoring `timeRange`
-makes LogPulse's entire Dashboard home screen show all-time numbers no matter what
-time range the user selects — a correctness bug on the app's primary screen, not
-just a minor inconsistency. Small, contained fix (reuse the existing
-`resolveTimeseriesWindow` helper already used by 3 sibling routes in the same file).
+~~**0. Fix CLS-12 and CLS-13.**~~ — **done 2026-09-14** (`70a93f3`). **Still open:
+deploy this to production and smoke-test it** — LogPulse's live app talks to Cloud
+Run production, not this local checkout, so neither fix takes effect until deployed.
 
 Per `LOG.md`'s dated backlog (the most trustworthy forward-looking source — items here
 have historically been worked in roughly this order):
@@ -232,6 +234,12 @@ services this collector is ingesting from:
 Decisions this ledger surfaced that are Kevin's to make, not to be resolved
 unilaterally:
 
+- **Deploy CLS-12/CLS-13 to production.** Both fixes are committed (`70a93f3`) but
+  this local checkout has no way to build/run/test the service (no `node_modules`,
+  see CLS-02) or deploy it, and LogPulse's live app only talks to the production
+  Cloud Run instance. Someone with deploy access needs to ship this and spot-check
+  log search + the Dashboard time-range selector against real production data
+  before either fix can be called verified rather than just code-reviewed.
 - **Open-source blocker**: what to do about `@bevingh/auth` being a private package
   (CLS-02) before this repo goes public under the `bevingh` org — publish it
   separately, inline the specific function used (`matchApiKey`), or accept that
@@ -271,3 +279,11 @@ unilaterally:
   Not fixed this session — flagged as high priority in Next Steps. Also logged
   incidental security observations (vulnerability-scanner traffic against 3
   producer services) for Kevin's awareness, unrelated to CLS/LogPulse code itself.
+- **2026-09-14 (same session, bug-fix phase)** — Fixed CLS-12 (search/q alias) and
+  CLS-13 (timeRange in stats/summary), plus a `$sort` on the byService facet for
+  deterministic ordering. Part of a combined bug-fix pass across both repos,
+  packaged as LogPulse's Phase 24 (see that repo's `PHASE_24_SPEC.md` and
+  `PROGRESS.md`). Verified by syntax check only (`node --check`) — no
+  `node_modules` in this sandbox to run Jest or a real server (CLS-02). **Not
+  deployed** — needs a real deploy + smoke test before either fix is verified
+  against production. Commit: `70a93f382095b52256d39a6adb32f57c0a9ff35d`.
