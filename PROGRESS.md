@@ -144,6 +144,25 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
 - **CLS-10** — `client/` (the log-shipper library used by producer apps) is a
   standalone folder with its own `package.json`, not published/versioned as an
   installable package — must be manually copied into each consuming app.
+- **CLS-13 (verified 2026-09-14, cross-repo, high impact)** — `GET
+  /logs/stats/summary` (`src/routes/logs.js`) destructures only `service`, `from`,
+  `to` from the query string — it never reads `timeRange`, unlike its three sibling
+  routes (`/logs/stats/timeseries`, `/logs/errors/groups`, `/services`), which all
+  correctly resolve `timeRange` via the shared `resolveTimeseriesWindow()` helper
+  already defined in the same file. LogPulse Analytics sends `?timeRange=last_24h`
+  (etc.) to this endpoint and never computes/sends `from`/`to` itself, so
+  `matchQuery` on this route is **always `{}`** — every call aggregates the
+  service's **entire history**, unconditionally. Confirmed live: switching
+  LogPulse's Dashboard time-range pills (1h/24h/7d/30d) does not change Total Logs,
+  Error Rate, Avg Latency, or the Service Health list at all, while the Traffic
+  chart directly above/below them (a different endpoint) correctly goes to "No
+  data" for a 1h window. This also explains an apparent discrepancy noticed during
+  the review: the Dashboard's Service Health list showed a service (`unified-
+  voting-api`) that the Services catalog page (`/services`, correctly time-scoped)
+  did not — the former is all-time, the latter is genuinely last-24h.
+  **Fix**: have `/logs/stats/summary`'s handler call `resolveTimeseriesWindow(req.query)`
+  (already exported from this same module) and fold the resolved `start`/`end` into
+  `matchQuery`, matching the pattern its three siblings already use.
 - **CLS-12 (verified 2026-09-14, cross-repo)** — `GET /api/v1/logs` only accepts a
   `q` query param for regex search (`src/routes/logs.js:65-116`). LogPulse Analytics'
   client sends `search=<term>` instead (`ApiEndpoints.buildLogsQuery`), which this
@@ -159,6 +178,12 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
   real deploy attempt happened, but current live status is unverified from docs alone.
 
 ## Next Steps
+
+**0. New, high priority — fix CLS-13.** `/logs/stats/summary` ignoring `timeRange`
+makes LogPulse's entire Dashboard home screen show all-time numbers no matter what
+time range the user selects — a correctness bug on the app's primary screen, not
+just a minor inconsistency. Small, contained fix (reuse the existing
+`resolveTimeseriesWindow` helper already used by 3 sibling routes in the same file).
 
 Per `LOG.md`'s dated backlog (the most trustworthy forward-looking source — items here
 have historically been worked in roughly this order):
@@ -180,6 +205,27 @@ have historically been worked in roughly this order):
    that's actually wired up, and refresh `HANDOFF.md`/`PROJECT_SUMMARY.md`'s stale
    status claims (or fold their still-useful content into this ledger and mark them
    historical, consistent with how LogPulse's ledger treats its own legacy docs).
+
+## Security observations (informational, 2026-09-14)
+
+Noticed incidentally while reviewing real log data through LogPulse — not a CLS or
+LogPulse code defect, but worth Kevin's attention since it's about the producer
+services this collector is ingesting from:
+
+- **`fyp-management-backend`** is getting repeated 404s for `/api/.git/config` and
+  `/api/session/properties`, from `161.97.108.244`.
+- **`academicx-api`** is getting 404s for `/firebase-key.json` and
+  `/firebase-adminsdk.json` — someone specifically probing for an exposed Firebase
+  service-account credential file.
+- **`payment-gateway-api`** — a large share of its top-endpoint traffic is WordPress/
+  wp-json reconnaissance (`/wordpress/`, `/wp/`, `/blog/wp-json/batch/v1`,
+  `/wp-json/batch/v1`, etc.), the classic pattern of a scanner checking for an
+  exposed or vulnerable WP install.
+- All three look like routine, broad, automated vulnerability-scanner traffic
+  (nothing suggests a successful hit — every one of these routes correctly 404s),
+  but it's hitting three different services behind this same collector, which is
+  worth a look if that source IP/pattern isn't already known or blocked at the
+  infrastructure level.
 
 ## Human pass queue
 
@@ -216,3 +262,12 @@ unilaterally:
   private-registry PAT (see CLS-02), so it wasn't attempted this session. Local `main`
   was 2 commits ahead of `origin/main` before this commit, not yet pushed.
   Commit: `9c545fb20ab068bfd08011f022d02e37596ff76c`.
+- **2026-09-14 (same session, cross-repo review with live data)** — While reviewing
+  LogPulse Analytics' screens against this service's real production data, found
+  CLS-13: `/logs/stats/summary` never reads `timeRange` (only its 3 sibling routes
+  do), so LogPulse's Dashboard home screen shows all-time numbers regardless of
+  which time range the user selects — confirmed live by switching the selector and
+  watching the stat cards not move while the (correctly-scoped) traffic chart did.
+  Not fixed this session — flagged as high priority in Next Steps. Also logged
+  incidental security observations (vulnerability-scanner traffic against 3
+  producer services) for Kevin's awareness, unrelated to CLS/LogPulse code itself.
