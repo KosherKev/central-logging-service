@@ -25,13 +25,13 @@
     (`src/jobs/archiveOldLogs.js`) only deletes from MongoDB — it has never uploaded to
     GCS, going back to a same-day descope on the initial commit (`039bb46`,
     2026-02-14). `storageService.js` (the GCS wrapper) is dead code today.
-  - **`@bevingh/auth` is a private GitHub Packages-scoped dependency.** `npm install`
-    requires a personal `read:packages` GitHub PAT in a new contributor's own
-    `~/.npmrc`; the Docker build needs the same token via a BuildKit `--secret` mount.
-    **This is a real blocker for the open-source plan** — a new user cloning this repo
-    cannot build it without private-registry access, unless `@bevingh/auth` is also
-    published publicly or the dependency is inlined/replaced. Flagged for the Human
-    pass queue below.
+  - ~~`@bevingh/auth` is a private GitHub Packages-scoped dependency~~ — **resolved
+    2026-09-14** (`5c03118`): Kevin published `@bevingh/auth` (and `@bevingh/errors`)
+    to the public npm registry. This was also the actual cause of the most recent
+    deploy failure (`scripts/deploy.sh` hard-exits without a now-nonexistent token
+    file) — removed the private-registry wiring from `.npmrc`/`Dockerfile`/
+    `deploy.sh`/`README.md`. `npm install` and the full test suite (48/48) both
+    verified working in this sandbox for the first time.
   - No `scripts/green-gate.sh` and no CI workflow (`.github/workflows/` absent) — same
     gap LogPulse had before `842b0ca`. `package.json` also has no `lint` or `build`
     script, so a green-gate run here would report both as gaps even once added.
@@ -117,9 +117,20 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
   `DEPLOYMENT.md` but has never been implemented; the purge job is delete-only. No
   cold-storage retrieval endpoint exists at all. (`HANDOFF.md` §7, `LOG.md` final
   entry, confirmed still true by reading `src/jobs/archiveOldLogs.js`.)
-- **CLS-02** — `@bevingh/auth` is a private, org-scoped npm dependency. Blocks a new
-  open-source contributor from `npm install`/Docker build without a personal
-  `read:packages` PAT. No doc addresses making it (or an equivalent) public.
+- ~~**CLS-02**~~ — **resolved 2026-09-14** (`5c03118`). Was: `@bevingh/auth` was a
+  private, org-scoped npm dependency, blocking a new open-source contributor from
+  `npm install`/Docker build without a personal `read:packages` PAT. Kevin published
+  `@bevingh/auth` (and its dependency `@bevingh/errors`) publicly on npmjs.org —
+  this was also the actual cause of the most recent deploy failure, since
+  `scripts/deploy.sh` hard-exits when the now-obsolete `.secrets/npm_token` file is
+  missing. Removed `.npmrc`'s GitHub Packages scope mapping, the Dockerfile's
+  BuildKit secret mount, and `deploy.sh`'s token-file check; regenerated
+  `package-lock.json` from a clean install so its resolved URLs point at
+  `registry.npmjs.org`. **Verified**: `npm install` succeeds with zero auth, and
+  the full test suite now runs and passes (48/48, 6 suites) for the first time
+  this session — this sandbox had no way to do either before. This also fully
+  resolves the open-source "clone → run" blocker flagged in the Human pass queue
+  below.
 - **CLS-03** — In-memory rate limiter (`middleware/rateLimit.js`) does not share state
   across Cloud Run instances — each instance enforces its own independent limit.
   (`HANDOFF.md` §9, unresolved since 2026-06-17.)
@@ -187,6 +198,15 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
 deploy this to production and smoke-test it** — LogPulse's live app talks to Cloud
 Run production, not this local checkout, so neither fix takes effect until deployed.
 
+~~**0-deploy. Fix the deploy failure (CLS-02).**~~ — **done 2026-09-14** (`5c03118`):
+the deploy that failed was blocked by the now-obsolete private-registry token
+requirement (`@bevingh/auth` is public now); that requirement is removed
+everywhere it was wired in (`.npmrc`, `Dockerfile`, `scripts/deploy.sh`,
+`README.md`). `npm install` and the full test suite both verified working in this
+sandbox for the first time. **Kevin should re-run `./scripts/deploy.sh`** (or
+whatever CI/CD path was used before) — this was the actual blocker on the failed
+deploy, so it should go through cleanly now, carrying CLS-12/CLS-13 with it.
+
 Per `LOG.md`'s dated backlog (the most trustworthy forward-looking source — items here
 have historically been worked in roughly this order):
 
@@ -234,18 +254,16 @@ services this collector is ingesting from:
 Decisions this ledger surfaced that are Kevin's to make, not to be resolved
 unilaterally:
 
-- **Deploy CLS-12/CLS-13 to production.** Both fixes are committed (`70a93f3`) but
-  this local checkout has no way to build/run/test the service (no `node_modules`,
-  see CLS-02) or deploy it, and LogPulse's live app only talks to the production
-  Cloud Run instance. Someone with deploy access needs to ship this and spot-check
-  log search + the Dashboard time-range selector against real production data
-  before either fix can be called verified rather than just code-reviewed.
-- **Open-source blocker**: what to do about `@bevingh/auth` being a private package
-  (CLS-02) before this repo goes public under the `bevingh` org — publish it
-  separately, inline the specific function used (`matchApiKey`), or accept that
-  self-hosters need org access. This has to be decided before "clone → run" can
-  actually work for an external contributor, which is a stated goal of the
-  open-sourcing plan.
+- **Deploy CLS-12/CLS-13 (and the CLS-02 registry fix) to production.** All
+  committed (`70a93f3`, `5c03118`). This sandbox can build/test locally now (the
+  private-registry blocker is gone) but still can't deploy — Kevin needs to run
+  `./scripts/deploy.sh` (or existing CI/CD) and spot-check log search + the
+  Dashboard time-range selector against real production data before either
+  CLS-12/CLS-13 is verified rather than just code-reviewed.
+- ~~**Open-source blocker**: what to do about `@bevingh/auth` being a private
+  package~~ — **resolved**: Kevin published it (and `@bevingh/errors`) to the
+  public npm registry. "Clone → run" now works with no private-registry access —
+  confirmed by a clean `npm install` + full test-suite pass in this sandbox.
 - Whether to actually build the GCS cold-storage path (CLS-01) or formally drop it
   from the docs and lean fully into TTL+purge as the real retention story — right now
   the docs and the code disagree, and a new open-source user would be misled by the
@@ -287,3 +305,19 @@ unilaterally:
   `node_modules` in this sandbox to run Jest or a real server (CLS-02). **Not
   deployed** — needs a real deploy + smoke test before either fix is verified
   against production. Commit: `70a93f382095b52256d39a6adb32f57c0a9ff35d`.
+- **2026-09-14 (same session, deploy-failure fix)** — Kevin reported the deploy
+  attempt failed and correctly guessed why: the `@bevingh/*` private-registry auth
+  requirement (CLS-02) was obsolete — he'd published `@bevingh/auth` and
+  `@bevingh/errors` publicly on npmjs.org. Confirmed both packages public
+  (`registry.npmjs.org` returns them), then removed the private-registry wiring
+  everywhere it existed: `.npmrc` (deleted), `Dockerfile` (dropped the BuildKit
+  secret mount), `scripts/deploy.sh` (dropped the token-file check that was
+  exactly what made the deploy fail), `README.md`. Regenerated `package-lock.json`
+  from a clean install (the old lockfile still pointed at the private registry
+  even though a locally-cached install could paper over it — a real Docker build
+  has no such cache). **Verified**: clean `npm install` with zero auth, and the
+  full Jest suite (48/48, 6 suites) — both firsts for this session, since
+  `node_modules` was previously unreachable. This resolves CLS-02 entirely and
+  removes the open-source "clone → run" blocker it represented. Kevin still needs
+  to re-run the actual deploy — this session has no GCP/deploy access. Commit:
+  `5c031181c6ca9fad3601a70ee0aac950fbcf9052`.
