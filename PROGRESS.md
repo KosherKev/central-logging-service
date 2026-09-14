@@ -10,9 +10,13 @@
 
 - **Phase**: No formal phase numbering exists in this repo (unlike LogPulse's Phase-N
   system) — work has shipped as a sequence of dated PRs described in `LOG.md`. The last
-  completed unit of work is application-side error-group aggregation with improved
+  *feature* PR was application-side error-group aggregation with improved
   message extraction (`LOG.md`, final entry, 2026-07-21, commit `39de821`), fixing an
-  "Unknown error" megagroup bug in the P2 error-grouping feature.
+  "Unknown error" megagroup bug in the P2 error-grouping feature. Most recently
+  (2026-09-14): CLS-02 (private `@bevingh/auth` registry — resolved, packages are
+  public now), CLS-12 (search/`q` param alias), and CLS-13 (`/logs/stats/summary`
+  now respects `timeRange`) were fixed, deployed, and confirmed live by Kevin —
+  see Known Limitations and Changelog below. This is the current deployed state.
 - **Blocking issues**:
   - **Docs badly out of sync with code.** `HANDOFF.md` (dated 2026-06-17) and
     `PROJECT_SUMMARY.md` (dated 2026-02-14, never updated) both claim
@@ -176,17 +180,20 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
   the pattern its three siblings already used. Also added a `$sort: {totalRequests:
   -1}` to the `byService` facet — `$group` has no ordering guarantee, which was
   visibly reshuffling LogPulse's Service Health list between identical-window
-  refreshes. **Not yet deployed or test-suite-verified** — this sandbox has no
-  `node_modules` (needs the private `@bevingh/auth` package, see CLS-02), so this
-  was verified by `node --check` (syntax) and careful reading against the 3 working
-  sibling routes, not by running Jest or a real server. Needs a deploy + smoke test.
+  refreshes. **Deployed and confirmed live 2026-09-14** — Kevin verified the
+  Dashboard's stat cards now actually move when switching time ranges (this
+  sandbox still can't run Jest itself against a real server — see CLS-02's
+  `node_modules` note — so this was verified live in the real app, not by an
+  integration test here).
 - ~~**CLS-12**~~ — **fixed 2026-09-14** (`70a93f3`). Was: `GET /api/v1/logs` only
   accepted a `q` query param for regex search (`src/routes/logs.js:65-116`).
   LogPulse Analytics' client sends `search=<term>` instead
   (`ApiEndpoints.buildLogsQuery`), which this route silently ignored — the search
   fell through to the default unfiltered query. Fixed by accepting `search` as an
   alias for `q` (additive, backward-compatible — `q` stays canonical for any other
-  caller). Same not-yet-deployed caveat as CLS-13 above.
+  caller). **Deployed and confirmed live 2026-09-14** — Kevin verified both the
+  Logs page's own search bar and LogPulse's "Find Similar" action return real
+  results now.
 - **CLS-11** — No deployed-URL or live-production confirmation exists in any doc;
   `DEPLOYMENT.md`/`README.md` use placeholder values (`YOUR_PROJECT_ID`,
   `YOUR_SERVICE_URL`) throughout. The `linux/amd64` fix commit implies at least one
@@ -194,18 +201,17 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
 
 ## Next Steps
 
-~~**0. Fix CLS-12 and CLS-13.**~~ — **done 2026-09-14** (`70a93f3`). **Still open:
-deploy this to production and smoke-test it** — LogPulse's live app talks to Cloud
-Run production, not this local checkout, so neither fix takes effect until deployed.
+~~**0. Fix CLS-12 and CLS-13.**~~ — **done 2026-09-14** (`70a93f3`), **deployed and
+confirmed live 2026-09-14**. Both fixes are in production and Kevin has verified
+them working against the real app — nothing outstanding here.
 
 ~~**0-deploy. Fix the deploy failure (CLS-02).**~~ — **done 2026-09-14** (`5c03118`):
 the deploy that failed was blocked by the now-obsolete private-registry token
 requirement (`@bevingh/auth` is public now); that requirement is removed
 everywhere it was wired in (`.npmrc`, `Dockerfile`, `scripts/deploy.sh`,
 `README.md`). `npm install` and the full test suite both verified working in this
-sandbox for the first time. **Kevin should re-run `./scripts/deploy.sh`** (or
-whatever CI/CD path was used before) — this was the actual blocker on the failed
-deploy, so it should go through cleanly now, carrying CLS-12/CLS-13 with it.
+sandbox for the first time. Kevin re-ran the deploy and it succeeded, carrying
+CLS-12/CLS-13 with it.
 
 Per `LOG.md`'s dated backlog (the most trustworthy forward-looking source — items here
 have historically been worked in roughly this order):
@@ -254,12 +260,10 @@ services this collector is ingesting from:
 Decisions this ledger surfaced that are Kevin's to make, not to be resolved
 unilaterally:
 
-- **Deploy CLS-12/CLS-13 (and the CLS-02 registry fix) to production.** All
-  committed (`70a93f3`, `5c03118`). This sandbox can build/test locally now (the
-  private-registry blocker is gone) but still can't deploy — Kevin needs to run
-  `./scripts/deploy.sh` (or existing CI/CD) and spot-check log search + the
-  Dashboard time-range selector against real production data before either
-  CLS-12/CLS-13 is verified rather than just code-reviewed.
+- ~~**Deploy CLS-12/CLS-13 (and the CLS-02 registry fix) to production.**~~ —
+  **done**: Kevin ran the deploy, it succeeded, and he's confirmed both log
+  search and the Dashboard time-range selector work against real production
+  data. Nothing outstanding from this round of fixes.
 - ~~**Open-source blocker**: what to do about `@bevingh/auth` being a private
   package~~ — **resolved**: Kevin published it (and `@bevingh/errors`) to the
   public npm registry. "Clone → run" now works with no private-registry access —
@@ -321,3 +325,13 @@ unilaterally:
   removes the open-source "clone → run" blocker it represented. Kevin still needs
   to re-run the actual deploy — this session has no GCP/deploy access. Commit:
   `5c031181c6ca9fad3601a70ee0aac950fbcf9052`.
+- **2026-09-14 (same session, deploy confirmed)** — Kevin ran the deploy after
+  the CLS-02 fix; it succeeded. He then confirmed live, separately: log search
+  works (both the Logs page's own search bar and LogPulse's "Find Similar"),
+  and the Dashboard's time-range selector actually changes the stat cards. CLS-12
+  and CLS-13 are now fully verified in production, not just code-reviewed —
+  nothing outstanding from this round of fixes. (LogPulse's own client-side
+  fallout from this deploy — a theme-picker bug, a broken "Find Similar" message
+  match, and a dead-end "View Trace" page — is recorded in LogPulse's own
+  `PROGRESS.md`/`PHASE_24_SPEC.md`, not here, since the fixes were entirely
+  client-side.)
