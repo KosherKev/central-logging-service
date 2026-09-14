@@ -33,24 +33,14 @@ gcloud services enable cloudbuild.googleapis.com
 gcloud services enable run.googleapis.com
 gcloud services enable containerregistry.googleapis.com
 
-# Build Docker image (BuildKit secret for GitHub Packages — token file is never committed)
-# Place a read:packages PAT in .secrets/npm_token (gitignored), or override NPM_TOKEN_FILE.
-# Generate: https://github.com/settings/tokens/new?scopes=read:packages
-NPM_TOKEN_FILE=${NPM_TOKEN_FILE:-"$(dirname "$0")/../.secrets/npm_token"}
-if [ ! -f "${NPM_TOKEN_FILE}" ]; then
-    echo "❌ Missing GitHub Packages token file: ${NPM_TOKEN_FILE}"
-    echo "   Create a read:packages-only PAT and write it to that path (never commit it)."
-    echo "   Example: mkdir -p .secrets && printf '%s' \"\$TOKEN\" > .secrets/npm_token && chmod 600 .secrets/npm_token"
-    exit 1
-fi
-
-echo "🏗️  Building Docker image (DOCKER_BUILDKIT=1, secret id=npm_token, linux/amd64)..."
+echo "🏗️  Building Docker image (linux/amd64)..."
 # --platform is required on Apple Silicon (arm64) — Cloud Run runs linux/amd64,
 # and a locally-built arm64 image fails at container start with
 # "exec format error" (the binary format doesn't match the host CPU).
-DOCKER_BUILDKIT=1 docker build \
+# No private-registry secret needed — @bevingh/* packages are public on
+# npmjs.org now (was previously a BuildKit secret against GitHub Packages).
+docker build \
   --platform linux/amd64 \
-  --secret id=npm_token,src="${NPM_TOKEN_FILE}" \
   -t ${IMAGE_NAME}:latest .
 
 # Push to Google Container Registry

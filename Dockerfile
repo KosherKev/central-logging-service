@@ -4,17 +4,13 @@ FROM node:18-alpine
 # Set working directory
 WORKDIR /app
 
-# Copy package files + scoped registry config (no token in the image layers)
+# Copy package files
 COPY package*.json ./
-COPY .npmrc ./
 
-# Install production deps. Token is a BuildKit secret — never ARG/ENV (leaks into layers).
-# Build with: DOCKER_BUILDKIT=1 docker build --secret id=npm_token,src=.secrets/npm_token ...
-RUN --mount=type=secret,id=npm_token \
-    echo "@bevingh:registry=https://npm.pkg.github.com" > .npmrc && \
-    echo "//npm.pkg.github.com/:_authToken=$(cat /run/secrets/npm_token)" >> .npmrc && \
-    npm ci --only=production && \
-    rm .npmrc
+# @bevingh/* packages are public on npmjs.org now — plain install, no
+# private-registry auth needed (was previously a BuildKit secret against
+# GitHub Packages; reversed once the packages were published publicly).
+RUN npm ci --only=production
 
 # Copy application code
 COPY . .

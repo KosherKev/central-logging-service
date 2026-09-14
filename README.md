@@ -31,19 +31,12 @@ Your APIs → Batch Logs → Logging Service (Cloud Run)
 
 ### 1. Installation
 
-Private `@bevingh/*` packages resolve from GitHub Packages. This repo's committed `.npmrc` only sets the scope (no token). Put a **read:packages**-only PAT in your user `~/.npmrc`:
-
-```ini
-@bevingh:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=YOUR_READ_PACKAGES_TOKEN
-```
-
-Verify, then install:
-
 ```bash
-npm whoami --registry=https://npm.pkg.github.com
 npm install
 ```
+
+`@bevingh/*` packages (`@bevingh/auth`, `@bevingh/errors`) are published publicly
+on npmjs.org — no private registry or auth token needed.
 
 ### 2. Environment Setup
 
@@ -389,20 +382,12 @@ app.use((req, res, next) => {
 
 ### 1. Build Docker Image
 
-`npm ci` needs GitHub Packages at build time. Use a BuildKit secret (never `ARG`/`ENV` for the token). Token file is **never committed** (see `.secrets/` in `.gitignore`).
-
 ```bash
-mkdir -p .secrets
-# write a read:packages-only PAT (not a publish token)
-printf '%s' "$GITHUB_READ_PACKAGES_TOKEN" > .secrets/npm_token
-chmod 600 .secrets/npm_token
-
-DOCKER_BUILDKIT=1 docker build \
-  --secret id=npm_token,src=.secrets/npm_token \
-  -t gcr.io/YOUR_PROJECT_ID/central-logging-service .
+docker build -t gcr.io/YOUR_PROJECT_ID/central-logging-service .
 ```
 
-Or use `./scripts/deploy.sh`, which wires the secret mount the same way.
+Or use `./scripts/deploy.sh`, which builds and deploys in one step. No
+private-registry auth needed — `@bevingh/*` packages are public on npmjs.org.
 
 ### 2. Push to Google Container Registry
 
