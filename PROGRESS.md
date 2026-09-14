@@ -144,6 +144,15 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
 - **CLS-10** — `client/` (the log-shipper library used by producer apps) is a
   standalone folder with its own `package.json`, not published/versioned as an
   installable package — must be manually copied into each consuming app.
+- **CLS-12 (verified 2026-09-14, cross-repo)** — `GET /api/v1/logs` only accepts a
+  `q` query param for regex search (`src/routes/logs.js:65-116`). LogPulse Analytics'
+  client sends `search=<term>` instead (`ApiEndpoints.buildLogsQuery`), which this
+  route silently ignores — the search falls through to the default unfiltered query.
+  Confirmed by reading both repos' current code, not from docs. Affects three UI
+  entry points client-side (see LogPulse's `PROGRESS.md` KL-2609-search). Recommend
+  fixing here by accepting `search` as an alias for `q` (`const { q, search, ... } =
+  req.query;` then `const term = q || search;`) rather than changing the client,
+  since that's a strictly additive, backward-compatible change.
 - **CLS-11** — No deployed-URL or live-production confirmation exists in any doc;
   `DEPLOYMENT.md`/`README.md` use placeholder values (`YOUR_PROJECT_ID`,
   `YOUR_SERVICE_URL`) throughout. The `linux/amd64` fix commit implies at least one
