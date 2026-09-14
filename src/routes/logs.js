@@ -70,12 +70,18 @@ router.get('/', authenticate, async (req, res) => {
       traceId,
       statusCode,
       q,
+      search,
       limit = 100,
       skip = 0,
       sortBy = 'timestamp',
       sortOrder = 'desc'
     } = req.query;
-    
+    // `search` is an alias for `q` — LogPulse Analytics has always sent
+    // `search`, which this route never read (confirmed live: the search
+    // bar and "Find Similar"/"View Similar" silently returned unfiltered
+    // results). `q` stays canonical for any other existing caller.
+    const searchTerm = q || search;
+
     // Build query
     const query = {};
     
@@ -96,8 +102,8 @@ router.get('/', authenticate, async (req, res) => {
     
     let effectiveLimit = Math.min(parseInt(limit), 1000);
 
-    if (q) {
-      const trimmedQ = q.trim();
+    if (searchTerm) {
+      const trimmedQ = searchTerm.trim();
       if (trimmedQ) {
         // Escape regex metacharacters
         const escapedQ = trimmedQ.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -333,17 +339,25 @@ function formatByServiceStats(rows = []) {
  */
 router.get('/stats/summary', authenticate, async (req, res) => {
   try {
-    const { service, from, to } = req.query;
-    
-    // Build match query
-    const matchQuery = {};
-    if (service) matchQuery.service = service;
-    if (from || to) {
-      matchQuery.timestamp = {};
-      if (from) matchQuery.timestamp.$gte = new Date(from);
-      if (to) matchQuery.timestamp.$lte = new Date(to);
+    // Was: only read service/from/to, silently ignoring `timeRange` — every
+    // call aggregated the service's entire history regardless of what the
+    // client's time-range selector showed (confirmed live: LogPulse's
+    // Dashboard stat cards and Service Health list didn't move when
+    // switching 1h/24h/7d/30d, while the timeseries chart below correctly
+    // did). Now resolves the same window its 3 sibling routes already use.
+    const resolved = resolveTimeseriesWindow(req.query);
+    if (resolved.error) {
+      return res.status(400).json({
+        success: false,
+        error: resolved.error
+      });
     }
-    
+    const { start, end, service } = resolved;
+
+    // Build match query
+    const matchQuery = { timestamp: { $gte: start, $lte: end } };
+    if (service) matchQuery.service = service;
+
     // Aggregation pipeline
     const stats = await Log.aggregate([
       { $match: matchQuery },
@@ -362,7 +376,11 @@ router.get('/stats/summary', authenticate, async (req, res) => {
                 },
                 avgDuration: { $avg: '$duration' }
               }
-            }
+            },
+            // $group gives no ordering guarantee — without this, LogPulse's
+            // Service Health list (which just renders object key order)
+            // visibly reshuffled between identical-window refreshes.
+            { $sort: { totalRequests: -1 } }
           ],
           byStatusCode: [
             { $group: { _id: '$statusCode', count: { $sum: 1 } } },
