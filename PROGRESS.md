@@ -202,5 +202,8 @@ unilaterally:
   `HANDOFF.md`/`PROJECT_SUMMARY.md` stale by ~9 routes and several resolved-vs-open
   contradictions (see Known Limitations CLS-01 through CLS-11). Flagged the
   `@bevingh/auth` private-package dependency (CLS-02) as a blocker for the planned
-  open-source release. Could not verify: current `npm test` pass/fail state — not run
-  this session. Local `main` is 2 commits ahead of `origin/main`, not yet pushed.
+  open-source release. Could not verify: current `npm test` pass/fail state —
+  `node_modules` is not installed in this checkout and installing it would need the
+  private-registry PAT (see CLS-02), so it wasn't attempted this session. Local `main`
+  was 2 commits ahead of `origin/main` before this commit, not yet pushed.
+  Commit: `9c545fb20ab068bfd08011f022d02e37596ff76c`.
