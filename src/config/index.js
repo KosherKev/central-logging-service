@@ -15,7 +15,10 @@ module.exports = {
   },
   
   auth: {
-    apiKeys: process.env.API_KEYS ? process.env.API_KEYS.split(',') : ['dev-key-123']
+    apiKeys: process.env.API_KEYS ? process.env.API_KEYS.split(',') : ['dev-key-123'],
+    // Separate trust tier from app-level API keys — guards /admin/keys, which
+    // can mint and revoke those keys. Set by `npm run setup` on first clone.
+    adminSetupToken: process.env.ADMIN_SETUP_TOKEN || null
   },
   
   gcs: {

@@ -7,6 +7,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "test": "node --experimental-vm-modules node_modules/.bin/jest --forceExit",
+    "setup": "node scripts/setup.js",
+    "migrate-scopes": "node scripts/migrate-scopes.js",
     "generate-app-key": "node src/utils/generateAppApiKey.js"
   },
   "jest": {

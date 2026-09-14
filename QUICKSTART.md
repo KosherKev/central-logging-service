@@ -15,19 +15,22 @@ cd /Users/kevinafenyo/Documents/GitHub/central-logging-service
 npm install
 ```
 
-## 3. Configure Environment
+## 3. Run the setup wizard
 
 ```bash
-cp .env.example .env
+npm run setup
 ```
 
-Edit `.env` with your settings:
-```env
-PORT=8080
-NODE_ENV=development
-MONGODB_URI=mongodb://localhost:27017/central-logging
-API_KEYS=dev-key-123
-```
+This asks for a MongoDB connection string (prints a link to MongoDB Atlas's
+free tier — signup, get a URI, no card required — if you don't already have
+one), writes `.env` for you, generates an admin token for the key-provisioning
+UI, and optionally creates your first API key on the spot.
+
+Don't want the wizard? `cp .env.example .env` and fill it in by hand still
+works — just remember to also generate an `ADMIN_SETUP_TOKEN`
+(`node -e "console.log('admin_' + require('crypto').randomBytes(24).toString('hex'))"`)
+and at least one app key via `npm run generate-app-key` (see step 7) before
+anything can authenticate.
 
 ## 4. Start MongoDB (if local)
 
@@ -57,6 +60,10 @@ You should see:
 
 ## 6. Test the Service
 
+If `npm run setup` created a key for you, use it below in place of
+`YOUR_KEY`. Otherwise open `http://localhost:8080/admin/keys.html`, paste
+your `ADMIN_SETUP_TOKEN`, and create one with `logs:read` + `logs:write`.
+
 ```bash
 # Health check
 curl http://localhost:8080/health
@@ -64,7 +71,7 @@ curl http://localhost:8080/health
 # Submit test logs
 curl -X POST http://localhost:8080/api/v1/logs \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-key-123" \
+  -H "X-API-Key: YOUR_KEY" \
   -d '{
     "logs": [
       {
@@ -82,44 +89,38 @@ curl -X POST http://localhost:8080/api/v1/logs \
 
 # Query logs
 curl "http://localhost:8080/api/v1/logs?limit=10" \
-  -H "X-API-Key: dev-key-123"
+  -H "X-API-Key: YOUR_KEY"
 ```
 
 ## 7. Integrate with Your API
 
-### Install Client Library
+Recommended: **`@bevingh/telemetry`**, which reports logs, metrics, and
+health through one client and one unified key
+(`createTelemetryClient({ appId, collectorUrl, apiKey })`, then
+`telemetry.reportLog(entry)` / `logMiddleware()` for Express — see that
+package's README). Provision its key with `logs:write` (+ `metrics:write`
+if it also reports metrics) via `/admin/keys.html` or `npm run generate-app-key`.
 
-```bash
-# In your API project
-cd ../your-api-project
-npm install node-fetch uuid
-```
-
-### Copy Client Files
-
-```bash
-cp -r ../central-logging-service/client ./
-```
-
-### Use in Your Code
+`client/log-shipper.js` in this repo still works (logs only, same flat-key
+scheme as before) but is deprecated in favor of `@bevingh/telemetry` — see
+that file's header comment. If you're starting a new integration, use
+`@bevingh/telemetry` instead:
 
 ```javascript
 const express = require('express');
-const LogShipper = require('./client/log-shipper');
+const { createTelemetryClient } = require('@bevingh/telemetry');
+const { createLogMiddleware } = require('@bevingh/telemetry/adapters/express');
 
 const app = express();
 
-// Initialize logger
-const logger = new LogShipper({
-  serviceUrl: 'http://localhost:8080',
-  apiKey: 'dev-key-123',
-  serviceName: 'my-api'
+const telemetry = createTelemetryClient({
+  appId: 'my-api',
+  collectorUrl: 'http://localhost:8080',
+  apiKey: 'YOUR_KEY', // needs the logs:write scope
 });
 
-// Add middleware
-app.use(logger.middleware());
+app.use(createLogMiddleware({ client: telemetry }));
 
-// Your routes...
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Hello World' });
 });
@@ -131,13 +132,13 @@ app.listen(3000);
 
 ```bash
 # All logs
-curl "http://localhost:8080/api/v1/logs" -H "X-API-Key: dev-key-123"
+curl "http://localhost:8080/api/v1/logs" -H "X-API-Key: YOUR_KEY"
 
 # Error logs only
-curl "http://localhost:8080/api/v1/logs?level=error" -H "X-API-Key: dev-key-123"
+curl "http://localhost:8080/api/v1/logs?level=error" -H "X-API-Key: YOUR_KEY"
 
 # Stats
-curl "http://localhost:8080/api/v1/logs/stats/summary" -H "X-API-Key: dev-key-123"
+curl "http://localhost:8080/api/v1/logs/stats/summary" -H "X-API-Key: YOUR_KEY"
 ```
 
 ## 9. Next Steps
@@ -172,7 +173,12 @@ PORT=8081 npm start
 
 ### API Key Not Working
 - Ensure you're using `X-API-Key` header (case-sensitive)
-- Check the key matches what's in your `.env` file
+- Check the key was issued with the scope the route needs (`logs:read`,
+  `logs:write`, `metrics:read`, or `metrics:write`) — list existing keys and
+  their scopes at `/admin/keys.html`, or `GET /admin/keys` with
+  `Authorization: Bearer <ADMIN_SETUP_TOKEN>`
+- A 403 with "not authorized for scope" means the key is valid but missing
+  that scope, not that it's wrong — issue a new key or add the scope
 - Verify Content-Type is `application/json`
 
 ## Development Mode

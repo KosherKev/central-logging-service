@@ -3,7 +3,17 @@ const { v4: uuidv4 } = require('uuid');
 
 /**
  * LogShipper - Client library for shipping logs to Central Logging Service
- * 
+ *
+ * DEPRECATED (Phase 25): superseded by @bevingh/telemetry's reportLog() /
+ * createLogMiddleware() (bevin-core/packages/telemetry), which ported this
+ * file's batching/retry/shutdown-hook behavior and adds it alongside
+ * metrics/health reporting under one unified, scoped API key. This file
+ * still works unmodified (same flat-key auth this service still accepts as
+ * a legacy fallback) — kept in place rather than deleted per this repo's
+ * "flag, don't silently remove" discipline, pending confirmation that
+ * nothing in production still requires it (see PHASE_25_SPEC.md Part B,
+ * Step 11). New integrations should use @bevingh/telemetry instead.
+ *
  * Usage:
  * const LogShipper = require('./log-shipper');
  * const logger = new LogShipper({
@@ -11,7 +21,7 @@ const { v4: uuidv4 } = require('uuid');
  *   apiKey: 'your-api-key',
  *   serviceName: 'user-api'
  * });
- * 
+ *
  * logger.log({ level: 'info', message: 'User logged in', ... });
  */
 class LogShipper {

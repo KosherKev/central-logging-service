@@ -1,5 +1,12 @@
 # Log Shipper Client
 
+> **Deprecated (Phase 25).** Superseded by `@bevingh/telemetry`'s
+> `reportLog()` / `createLogMiddleware()`, which does everything below plus
+> metrics/health reporting, under one unified API key. Kept working (same
+> auth this service still accepts as a legacy fallback) for existing
+> integrations; new ones should use `@bevingh/telemetry` instead — see its
+> README's "Logs" section.
+
 Client library for shipping logs from your APIs to the Central Logging Service.
 
 ## Installation

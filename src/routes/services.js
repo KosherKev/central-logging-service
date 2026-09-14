@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Log = require('../models/Log');
 const logger = require('../utils/logger');
-const authenticate = require('../middleware/auth');
+const apiKeyAuth = require('../middleware/apiKeyAuth');
 const {
   resolveTimeseriesWindow,
   formatByServiceStats
@@ -11,6 +11,7 @@ const { fetchLatestMetricsSnapshot } = require('./metrics');
 const { formatDisplayName } = require('../utils/displayName');
 
 const DEFAULT_ENDPOINT_LIMIT = 20;
+const requireLogsRead = apiKeyAuth('logs:read');
 
 /**
  * Per-service rollups from logs in [start, end].
@@ -250,7 +251,7 @@ async function buildServiceDetail({ name, start, end }) {
  * @desc    Catalog of known services (logs ∪ metrics appIds) with rollups
  * @access  Private (flat API key)
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', requireLogsRead, async (req, res) => {
   try {
     const resolved = resolveTimeseriesWindow(req.query);
     if (resolved.error) {
@@ -288,7 +289,7 @@ router.get('/', authenticate, async (req, res) => {
  * @desc    Service detail — endpoints + latest health/metrics/instances
  * @access  Private (flat API key)
  */
-router.get('/:name', authenticate, async (req, res) => {
+router.get('/:name', requireLogsRead, async (req, res) => {
   try {
     const name =
       typeof req.params.name === 'string' ? req.params.name.trim() : '';

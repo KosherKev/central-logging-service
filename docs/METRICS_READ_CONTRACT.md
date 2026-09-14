@@ -2,9 +2,18 @@
 
 **Status as of 2026-07-21 (P0 read slice):** `GET /api/v1/metrics` is the
 canonical latest-snapshot read. It was introduced in **PR-24** and extended
-in this PR with **`instanceCount` / `instances[]`**. Log write-side
-auth remains flat `X-API-Key`; metrics **writes** still use per-app
-`metricsAuth`.
+in this PR with **`instanceCount` / `instances[]`**.
+
+**Updated 2026-09-14 (Phase 25):** auth for every route in this contract
+(including this one) now goes through one unified, scoped key model
+(`middleware/apiKeyAuth.js`) instead of the separate flat-`X-API-Key`/
+per-app-`metricsAuth` split described below — see
+`logpulse_analytics/PHASE_25_SPEC.md`. This route now requires the
+`metrics:read` scope (tightened from the flat scheme, but the migration
+fallback still grants it, so no existing caller breaks); the write routes
+in §3 require `metrics:write`. The mechanics below (bcrypt-hashed
+`sk_live_`/`sk_test_` keys, `appId` must match the key's subject) are
+unchanged — only which middleware checks them changed.
 
 Related: `GET /api/v1/logs/stats/timeseries` (P0 traffic chart) lives under
 the logs router; see §6.

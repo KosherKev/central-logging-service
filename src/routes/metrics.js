@@ -2,13 +2,15 @@ const express = require('express');
 const router = express.Router();
 const Metric = require('../models/Metric');
 const logger = require('../utils/logger');
-const authenticate = require('../middleware/auth');
-const metricsAuth = require('../middleware/metricsAuth');
+const apiKeyAuth = require('../middleware/apiKeyAuth');
 const rateLimit = require('../middleware/rateLimit');
 const { validateHealthReport, validateMetricsReport } = require('../middleware/validation');
 
 /** Default window for distinct instanceId counting (15 minutes). */
 const DEFAULT_INSTANCE_WINDOW_SECONDS = 900;
+
+const requireMetricsRead = apiKeyAuth('metrics:read');
+const requireMetricsWrite = apiKeyAuth('metrics:write');
 
 /**
  * Enforce that the authenticated key's subjectId matches the claimed appId.
@@ -183,9 +185,9 @@ async function fetchLatestMetricsSnapshot(appIdFilter, options = {}) {
 /**
  * @route   POST /api/v1/metrics/health
  * @desc    Ingest a health ping from @bevingh/telemetry
- * @access  Private (per-app API key)
+ * @access  Private (API key with the metrics:write scope)
  */
-router.post('/health', metricsAuth, rateLimit, validateHealthReport, async (req, res) => {
+router.post('/health', requireMetricsWrite, rateLimit, validateHealthReport, async (req, res) => {
   try {
     if (!enforceAppScope(req, res)) return;
 
@@ -221,9 +223,9 @@ router.post('/health', metricsAuth, rateLimit, validateHealthReport, async (req,
 /**
  * @route   POST /api/v1/metrics
  * @desc    Ingest free-form metrics from @bevingh/telemetry
- * @access  Private (per-app API key)
+ * @access  Private (API key with the metrics:write scope)
  */
-router.post('/', metricsAuth, rateLimit, validateMetricsReport, async (req, res) => {
+router.post('/', requireMetricsWrite, rateLimit, validateMetricsReport, async (req, res) => {
   try {
     if (!enforceAppScope(req, res)) return;
 
@@ -258,11 +260,14 @@ router.post('/', metricsAuth, rateLimit, validateMetricsReport, async (req, res)
 /**
  * @route   GET /api/v1/metrics
  * @desc    Latest health + metrics snapshot per app (operator/dashboard read)
- * @access  Private (flat API key — same as GET /api/v1/logs; not per-app metricsAuth)
+ * @access  Private (API key with the metrics:read scope — Phase 25 tightened
+ *          this from the flat key GET /api/v1/logs used; the legacy fallback
+ *          in apiKeyAuth still satisfies metrics:read, so this is not a
+ *          breaking change for existing flat-key callers)
  * @query   appId - optional; when set, only that app; when omitted, one entry per appId
  * @query   instanceWindowSeconds - optional window for distinct instance count (default 900)
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', requireMetricsRead, async (req, res) => {
   try {
     const { appId, instanceWindowSeconds: rawWindow } = req.query;
     let instanceWindowSeconds = DEFAULT_INSTANCE_WINDOW_SECONDS;

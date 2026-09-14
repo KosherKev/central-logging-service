@@ -1,93 +1,83 @@
-const crypto = require('crypto');
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 const config = require('../config');
-const ApiKeyCandidate = require('../models/ApiKeyCandidate');
+const apiKeyService = require('../services/apiKeyService');
 
 /**
- * Generate a per-app telemetry API key, store only the bcrypt hash,
- * and print the raw key once for @bevingh/telemetry client config.
+ * CLI wrapper over apiKeyService.createKey (Phase 25) — kept for anyone
+ * still scripting against it, but the admin UI (/admin/keys.html) or the
+ * setup wizard (`npm run setup`) are the recommended path now.
  *
  * Usage:
- *   node src/utils/generateAppApiKey.js <appId> [--test]
+ *   node src/utils/generateAppApiKey.js <appId> [--scopes=logs:read,logs:write] [--test|--live|--both]
  *
  * Examples:
- *   node src/utils/generateAppApiKey.js academicx
- *   node src/utils/generateAppApiKey.js academicx --test
+ *   node src/utils/generateAppApiKey.js academicx --scopes=logs:write,metrics:write
+ *   node src/utils/generateAppApiKey.js logpulse --scopes=logs:read --live
  *
  * Raw key is NEVER written to the database — only the bcrypt hash is upserted.
  */
 
-function generateRawKey(environment) {
-  const randomBytes = crypto.randomBytes(32);
-  const body = randomBytes
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
+function parseArgs(argv) {
+  const positional = [];
+  let scopes = null;
+  let environment = 'live';
 
-  const prefix = environment === 'test' ? 'sk_test_' : 'sk_live_';
-  return `${prefix}${body}`;
+  for (const arg of argv) {
+    if (arg === '--test') environment = 'test';
+    else if (arg === '--live') environment = 'live';
+    else if (arg === '--both') environment = 'both';
+    else if (arg.startsWith('--scopes=')) scopes = arg.slice('--scopes='.length).split(',').filter(Boolean);
+    else positional.push(arg);
+  }
+
+  return { appId: positional[0], scopes, environment };
 }
 
 async function main() {
-  const args = process.argv.slice(2).filter((a) => a !== '--test');
-  const isTest = process.argv.includes('--test');
-  const appId = args[0];
+  const { appId, scopes, environment } = parseArgs(process.argv.slice(2));
 
-  if (!appId) {
+  if (!appId || !scopes || scopes.length === 0) {
     console.error(`
-Usage: node src/utils/generateAppApiKey.js <appId> [--test]
+Usage: node src/utils/generateAppApiKey.js <appId> --scopes=<scope1,scope2,...> [--test|--live|--both]
 
-  appId   Application id (becomes subjectId / telemetry appId), e.g. academicx
-  --test  Generate a sk_test_ key instead of sk_live_
+  appId    Application id (becomes subjectId), e.g. academicx
+  --scopes Comma-separated, from: logs:read, logs:write, metrics:read, metrics:write
+  --test / --live / --both   Which environment(s) to issue (default: --live)
 
-The raw key is printed once. Store it in the app's @bevingh/telemetry config.
-Only the bcrypt hash is saved to MongoDB.
+Prefer the admin UI (/admin/keys.html) or \`npm run setup\` for interactive use —
+this CLI remains for scripting.
 `);
     process.exit(1);
   }
 
-  const environment = isTest ? 'test' : 'live';
-  const rawKey = generateRawKey(environment);
-  const hash = await bcrypt.hash(rawKey, 12);
-
   await mongoose.connect(config.mongodb.uri, config.mongodb.options);
 
-  const update =
-    environment === 'test'
-      ? { $set: { testHash: hash }, $setOnInsert: { subjectId: appId, createdAt: new Date() } }
-      : { $set: { liveHash: hash }, $setOnInsert: { subjectId: appId, createdAt: new Date() } };
-
-  await ApiKeyCandidate.findOneAndUpdate(
-    { subjectId: appId },
-    update,
-    { upsert: true, new: true }
-  );
-
-  await mongoose.connection.close();
+  let result;
+  try {
+    result = await apiKeyService.createKey({ appId, scopes, environment });
+  } finally {
+    await mongoose.connection.close();
+  }
 
   console.log(`
 ================================================================================
-  PER-APP TELEMETRY API KEY (copy once — not stored in plaintext)
+  UNIFIED API KEY (copy once — not stored in plaintext)
 ================================================================================
-  appId:       ${appId}
-  environment: ${environment}
-  prefix:      ${environment === 'test' ? 'sk_test_' : 'sk_live_'}
+  appId:  ${result.appId}
+  label:  ${result.label || '(none)'}
+  scopes: ${result.scopes.join(', ')}
+${result.rawKeys.test ? `
+  Raw key (test, X-API-Key value):
+  ${result.rawKeys.test}
+` : ''}${result.rawKeys.live ? `
+  Raw key (live, X-API-Key value):
+  ${result.rawKeys.live}
+` : ''}
+  This same key authenticates both logs and metrics routes, subject to the
+  scopes above. Configure it in @bevingh/telemetry's createTelemetryClient({ apiKey })
+  and/or LogPulse Analytics' Settings, as appropriate.
 
-  Configure this raw key in the app's @bevingh/telemetry client:
-
-    createTelemetryClient({
-      appId: '${appId}',
-      // service origin only — client appends /api/v1/metrics[/health]
-      collectorUrl: 'https://<your-central-logging-service>',
-      apiKey: '${rawKey}',
-    })
-
-  Raw key (X-API-Key value):
-  ${rawKey}
-================================================================================
-  MongoDB: hash upserted on ApiKeyCandidate.subjectId="${appId}" (${environment}Hash)
+  MongoDB: hash upserted on ApiKeyCandidate.subjectId="${result.appId}".
   The raw key above will never be shown again from this service.
 ================================================================================
 `);

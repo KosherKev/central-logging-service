@@ -43,9 +43,15 @@
     across Cloud Run instances — noted as a known issue in `HANDOFF.md` §9 in June and
     never revisited since.
   - CORS is fully open (`app.use(cors())`, no origin allowlist) — `src/server.js`.
-  - Logs auth is a single flat pre-shared API key with no rotation, expiry, or per-key
-    identity (metrics auth was upgraded to per-app bcrypt-hashed keys in PR-22, but logs
-    auth was not).
+  - ~~Logs auth is a single flat pre-shared API key with no rotation, expiry, or
+    per-key identity (metrics auth was upgraded to per-app bcrypt-hashed keys in
+    PR-22, but logs auth was not)~~ — **resolved 2026-09-14 (Phase 25)**: one
+    unified, scoped key model (`ApiKeyCandidate` + `apiKeyAuth` middleware) now
+    guards logs and metrics alike, provisioned via `/admin/keys.html` or
+    `npm run setup` instead of a hand-run script. The old flat `API_KEYS` list
+    is kept only as a migration-window fallback — see Decisions log and
+    Changelog. **Not yet deployed** — code-complete and test-verified in this
+    sandbox only (see Next Steps).
 - **Next action**: No feature work is queued server-side beyond what `LOG.md` already
   flags as deferred (stage-timing/timeline spans, webhooks — see Next Steps). The
   practical next action is documentation/process cleanup (this ledger) plus the
@@ -213,6 +219,26 @@ everywhere it was wired in (`.npmrc`, `Dockerfile`, `scripts/deploy.sh`,
 sandbox for the first time. Kevin re-ran the deploy and it succeeded, carrying
 CLS-12/CLS-13 with it.
 
+**0-phase25. Deploy the unified API key auth (Phase 25, Part A).** Code-complete
+and test-verified in this sandbox (`npm test`: 68/68, all suites) — see
+`logpulse_analytics/PHASE_25_SPEC.md` for the full design. **Not deployed.**
+Before deploying:
+1. Run `node scripts/migrate-scopes.js` against production Mongo (backfills
+   `scopes: ['metrics:write']` on every existing `ApiKeyCandidate` row —
+   idempotent, safe to run more than once).
+2. Set `ADMIN_SETUP_TOKEN` in the production env (Cloud Run env var), or run
+   `npm run setup` once against production to generate one.
+3. Deploy. The legacy flat `API_KEYS` fallback means existing consumers
+   (LogPulse's current key, any producer using `client/log-shipper.js`) keep
+   working through the cutover with no forced flag day.
+4. Confirm who currently calls `GET /api/v1/metrics` with the flat key — this
+   phase tightened that route to require `metrics:read`, which the legacy
+   fallback does satisfy, so this should be a non-event, but worth confirming
+   live once deployed (Open Decision 1 in `PHASE_25_SPEC.md`).
+5. Once confirmed stable, issue LogPulse a real `logs:read` key via
+   `/admin/keys.html` and close out KL-2609-key on the LogPulse side (Part C
+   of the spec — that repo's `PROGRESS.md` Human pass queue).
+
 Per `LOG.md`'s dated backlog (the most trustworthy forward-looking source — items here
 have historically been worked in roughly this order):
 
@@ -264,6 +290,12 @@ unilaterally:
   **done**: Kevin ran the deploy, it succeeded, and he's confirmed both log
   search and the Dashboard time-range selector work against real production
   data. Nothing outstanding from this round of fixes.
+- **Deploy Phase 25 (unified API keys).** Run the migration script, set
+  `ADMIN_SETUP_TOKEN`, deploy, then issue real scoped keys — see Next Steps
+  item 0-phase25 above for the exact sequence. Not yet done.
+- **Decide when to remove the legacy flat-`API_KEYS` fallback** in
+  `apiKeyAuth.js` — deliberately left open in `PHASE_25_SPEC.md` rather than
+  scheduled, pending confirmation every real consumer holds a DB-backed key.
 - ~~**Open-source blocker**: what to do about `@bevingh/auth` being a private
   package~~ — **resolved**: Kevin published it (and `@bevingh/errors`) to the
   public npm registry. "Clone → run" now works with no private-registry access —
@@ -335,3 +367,34 @@ unilaterally:
   match, and a dead-end "View Trace" page — is recorded in LogPulse's own
   `PROGRESS.md`/`PHASE_24_SPEC.md`, not here, since the fixes were entirely
   client-side.)
+- **2026-09-14 (same session, Phase 25 — unified API keys, Part A)** —
+  Implemented `logpulse_analytics/PHASE_25_SPEC.md`'s Part A in full: added
+  `scopes`/`label`/`lastUsedAt`/`revokedAt` to `ApiKeyCandidate`; added
+  `src/services/apiKeyService.js` as the single write path for key
+  lifecycle (create/list/revoke/rotate); replaced `middleware/auth.js` +
+  `middleware/metricsAuth.js` with one `middleware/apiKeyAuth.js`
+  (scope-checked, with a legacy flat-`API_KEYS` fallback restricted to the
+  scopes that scheme already granted — explicitly excluding `metrics:write`,
+  which never accepted flat keys); rewired every logs/services/metrics route
+  onto it; added `/admin/keys` (REST) + `/admin/keys.html` (static, no
+  framework) for provisioning, replacing the hand-run
+  `generateAppApiKey.js` CLI (kept as a thin wrapper over the same service);
+  added `npm run setup` (interactive wizard: Mongo URI with an Atlas
+  signup link, admin token generation, optional first key) and
+  `npm run migrate-scopes` (idempotent backfill for existing candidates).
+  Deleted the now-superseded `middleware/metricsAuth.js` and its test after
+  confirming (via `grep`) nothing but that test still imported it — moved
+  its `enforceAppScope` coverage to a new `tests/metricsAppScope.test.js`.
+  Deliberately left `middleware/auth.js` and `routes/jobs.js` (the
+  `/jobs/purge-logs` cron endpoint) untouched — out of scope per the spec,
+  confirmed by checking `jobs.js`'s import before touching anything.
+  Tightened `GET /api/v1/metrics` from the flat scheme to `metrics:read`,
+  but included `metrics:read` in the legacy fallback's allowed scopes so
+  this is non-breaking for any existing caller. Updated `README.md`/
+  `QUICKSTART.md` throughout. **Verified**: `npm test` 68/68 passing (added
+  `apiKeyAuth.test.js`, `apiKeyService.test.js`, `adminAuth.test.js`,
+  `metricsAppScope.test.js`); all touched/new files pass `node --check`.
+  **Not deployed** — see Next Steps item 0-phase25 for the exact rollout
+  sequence (migration script → `ADMIN_SETUP_TOKEN` → deploy → confirm →
+  issue real keys). No commit yet — changes are in the working tree
+  pending Kevin's review before pushing/deploying.

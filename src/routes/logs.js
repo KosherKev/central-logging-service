@@ -3,7 +3,7 @@ const router = express.Router();
 const Log = require('../models/Log');
 const config = require('../config');
 const logger = require('../utils/logger');
-const authenticate = require('../middleware/auth');
+const apiKeyAuth = require('../middleware/apiKeyAuth');
 const rateLimit = require('../middleware/rateLimit');
 const { validateLogBatch } = require('../middleware/validation');
 const {
@@ -13,12 +13,15 @@ const {
   extractErrorDisplay
 } = require('../utils/errorFingerprint');
 
+const requireLogsRead = apiKeyAuth('logs:read');
+const requireLogsWrite = apiKeyAuth('logs:write');
+
 /**
  * @route   POST /api/v1/logs
  * @desc    Submit batch of logs
- * @access  Private (API Key required)
+ * @access  Private (API key with the logs:write scope)
  */
-router.post('/', authenticate, rateLimit, validateLogBatch, async (req, res) => {
+router.post('/', requireLogsWrite, rateLimit, validateLogBatch, async (req, res) => {
   try {
     const { logs } = req.validatedData;
     
@@ -60,7 +63,7 @@ router.post('/', authenticate, rateLimit, validateLogBatch, async (req, res) => 
  * @desc    Query logs with filters
  * @access  Private (API Key required)
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', requireLogsRead, async (req, res) => {
   try {
     const {
       service,
@@ -167,7 +170,7 @@ router.get('/', authenticate, async (req, res) => {
  * @desc    Get all logs for a specific trace ID
  * @access  Private (API Key required)
  */
-router.get('/:traceId', authenticate, async (req, res) => {
+router.get('/:traceId', requireLogsRead, async (req, res) => {
   try {
     const { traceId } = req.params;
     
@@ -337,7 +340,7 @@ function formatByServiceStats(rows = []) {
  * @desc    Get aggregated statistics
  * @access  Private (API Key required)
  */
-router.get('/stats/summary', authenticate, async (req, res) => {
+router.get('/stats/summary', requireLogsRead, async (req, res) => {
   try {
     // Was: only read service/from/to, silently ignoring `timeRange` — every
     // call aggregated the service's entire history regardless of what the
@@ -453,7 +456,7 @@ router.get('/stats/summary', authenticate, async (req, res) => {
  * @query   timeRange=last_hour|last_24h|last_7d|last_30d (default last_24h)
  * @query   service, from, to (optional ISO-8601 absolute window)
  */
-router.get('/stats/timeseries', authenticate, async (req, res) => {
+router.get('/stats/timeseries', requireLogsRead, async (req, res) => {
   try {
     const resolved = resolveTimeseriesWindow(req.query);
     if (resolved.error) {
@@ -608,7 +611,7 @@ async function fetchErrorGroups({ start, end, service, limit = 50 }) {
  *   level === 'error' OR statusCode >= 400
  * Sort: lastSeen descending.
  */
-router.get('/errors/groups', authenticate, async (req, res) => {
+router.get('/errors/groups', requireLogsRead, async (req, res) => {
   try {
     const resolved = resolveTimeseriesWindow(req.query);
     if (resolved.error) {

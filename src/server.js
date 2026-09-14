@@ -10,7 +10,9 @@ const metricsRoutes = require('./routes/metrics');
 const servicesRoutes = require('./routes/services');
 const jobsRoutes = require('./routes/jobs');
 const healthRoutes = require('./routes/health');
+const adminKeysRoutes = require('./routes/admin/keys');
 const logger = require('./utils/logger');
+const path = require('path');
 
 const app = express();
 
@@ -39,6 +41,11 @@ app.use('/api/v1/services', servicesRoutes);
 app.use('/jobs', jobsRoutes);
 app.use('/', healthRoutes);
 
+// Key provisioning admin API + static UI (Phase 25) — separate trust tier,
+// guarded by adminAuth (ADMIN_SETUP_TOKEN), not the app-level API keys above.
+app.use('/admin/keys', adminKeysRoutes);
+app.use('/admin', express.static(path.join(__dirname, 'public', 'admin')));
+
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({
@@ -59,7 +66,9 @@ app.get('/', (req, res) => {
       queryMetrics: 'GET /api/v1/metrics',
       listServices: 'GET /api/v1/services',
       getService: 'GET /api/v1/services/:name',
-      purgeOldLogs: 'POST /jobs/purge-logs'
+      purgeOldLogs: 'POST /jobs/purge-logs',
+      adminKeysUI: '/admin/keys.html',
+      adminKeysApi: 'GET|POST /admin/keys, POST /admin/keys/:appId/revoke, POST /admin/keys/:appId/rotate'
     },
     documentation: 'See README.md for full API documentation'
   });

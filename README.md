@@ -9,7 +9,7 @@ A centralized logging service designed to collect, store, and analyze logs from 
 - 🔥 **Hot & Cold Storage** - MongoDB for recent logs, Google Cloud Storage for archives
 - 🚀 **Batch Processing** - Efficient log ingestion with batching support
 - 🔍 **Advanced Querying** - Filter by service, level, time range, trace ID
-- 🔐 **API Key Authentication** - Flat keys for logs; per-app hashed keys for metrics
+- 🔐 **Unified, Scoped API Keys** - One per-app key type (`sk_live_`/`sk_test_`) authorizes logs and metrics, gated by scopes (`logs:read`, `logs:write`, `metrics:read`, `metrics:write`); provision via `/admin/keys.html` or `npm run setup`
 - 📈 **Analytics** - Error rates, performance metrics, aggregations
 - ☁️ **Cloud Run Ready** - Optimized for Google Cloud Run deployment
 
@@ -40,13 +40,27 @@ on npmjs.org — no private registry or auth token needed.
 
 ### 2. Environment Setup
 
-Create a `.env` file:
+```bash
+npm run setup
+```
+
+Interactive wizard: asks for a MongoDB URI (prints a MongoDB Atlas free-tier
+signup link if you need one), writes `.env`, generates an `ADMIN_SETUP_TOKEN`
+for `/admin/keys.html`, and can create your first app key on the spot.
+
+Prefer to do it by hand? `cp .env.example .env`:
 
 ```env
 PORT=8080
 NODE_ENV=production
 MONGODB_URI=mongodb://localhost:27017/central-logging
+
+# Legacy, migration-only fallback — see "Authentication" below.
 API_KEYS=your-api-key-1,your-api-key-2
+
+# Guards /admin/keys — generate with:
+#   node -e "console.log('admin_' + require('crypto').randomBytes(24).toString('hex'))"
+ADMIN_SETUP_TOKEN=
 
 # Google Cloud Storage (optional)
 GCS_BUCKET_NAME=your-logging-bucket
@@ -67,6 +81,31 @@ npm run dev
 npm start
 ```
 
+## Authentication
+
+One key type authorizes both logs and metrics, gated by scopes:
+
+| Scope | Guards |
+|---|---|
+| `logs:read` | `GET /api/v1/logs*`, `GET /api/v1/services*` |
+| `logs:write` | `POST /api/v1/logs` |
+| `metrics:read` | `GET /api/v1/metrics` |
+| `metrics:write` | `POST /api/v1/metrics`, `POST /api/v1/metrics/health` |
+
+Create one via `/admin/keys.html` (paste your `ADMIN_SETUP_TOKEN`), `npm run
+setup`, or the CLI:
+
+```bash
+node src/utils/generateAppApiKey.js academicx --scopes=logs:write,metrics:write --live
+```
+
+Every route checks `X-API-Key` against these DB-backed, bcrypt-hashed,
+individually revocable keys first. A flat, comma-separated `API_KEYS` env
+list is still accepted as a **legacy fallback** (migration only — satisfies
+`logs:read`, `logs:write`, and `metrics:read`, never `metrics:write`) so
+existing consumers keep working without a forced flag-day cutover. New
+integrations should get a scoped key instead.
+
 ## API Documentation
 
 ### Submit Logs
@@ -75,7 +114,7 @@ npm start
 
 **Headers:**
 ```
-X-API-Key: your-api-key
+X-API-Key: your-api-key   # needs the logs:write scope
 Content-Type: application/json
 ```
 
@@ -114,13 +153,13 @@ Content-Type: application/json
 
 **Endpoint:** `POST /api/v1/metrics/health`
 
-Uses **per-app** API keys (`sk_live_` / `sk_test_`), not the flat `API_KEYS` list used by `/api/v1/logs`. Generate one with:
+Needs a key with the `metrics:write` scope (see "Authentication" above —
+`metrics:write` is the one scope the legacy flat-key fallback never
+satisfies, so this route always needs a real scoped key):
 
 ```bash
 # requires MongoDB; prints the raw key once
-npm run generate-app-key -- academicx
-# or test key:
-node src/utils/generateAppApiKey.js academicx --test
+npm run generate-app-key -- academicx --scopes=metrics:write --live
 ```
 
 **Headers:**
@@ -168,7 +207,10 @@ The authenticated key's `subjectId` must equal `appId` or the request is rejecte
 
 **Endpoint:** `GET /api/v1/metrics`
 
-Operator/dashboard read (flat `API_KEYS` auth — same as `GET /api/v1/logs`, **not** per-app `metricsAuth`). Full contract: [`docs/METRICS_READ_CONTRACT.md`](docs/METRICS_READ_CONTRACT.md).
+Operator/dashboard read — needs the `metrics:read` scope (Phase 25 tightened
+this from the flat `API_KEYS` list `GET /api/v1/logs` uses; the legacy
+fallback still satisfies `metrics:read`, so existing flat-key callers are
+unaffected). Full contract: [`docs/METRICS_READ_CONTRACT.md`](docs/METRICS_READ_CONTRACT.md).
 
 **Query Parameters:**
 - `appId` — optional; when set, only that app; when omitted, one entry per distinct `appId`
@@ -288,7 +330,7 @@ Returns all logs associated with a specific request trace.
 
 **Endpoint:** `GET /api/v1/logs/errors/groups`
 
-Flat `X-API-Key`. Groups logs where `level === 'error'` **or** `statusCode >= 400` (matches LogPulse `LogEntry.isError`). Fingerprint = `fp_` + sha1(normalized message + code). Sorted by `lastSeen` desc.
+Needs the `logs:read` scope. Groups logs where `level === 'error'` **or** `statusCode >= 400` (matches LogPulse `LogEntry.isError`). Fingerprint = `fp_` + sha1(normalized message + code). Sorted by `lastSeen` desc.
 
 **Query:** `timeRange` (default `last_24h`), optional `service`, `limit` (default 50, max 200).
 
@@ -340,7 +382,27 @@ Per-service `errorRate` is percent 0–100; `avgDuration` is ms (LogPulse maps t
 
 ## Client Integration
 
-### Node.js Client Example
+### Node.js Client Example — `@bevingh/telemetry` (recommended)
+
+One client, one unified key, for logs *and* metrics/health:
+
+```javascript
+const { createTelemetryClient } = require('@bevingh/telemetry');
+const { createLogMiddleware } = require('@bevingh/telemetry/adapters/express');
+
+const telemetry = createTelemetryClient({
+  appId: 'user-api',
+  collectorUrl: 'https://your-logging-service.run.app',
+  apiKey: 'your-api-key', // needs logs:write (+ metrics:write if also reporting metrics)
+});
+
+app.use(createLogMiddleware({ client: telemetry }));
+```
+
+### Node.js Client Example — `client/log-shipper.js` (deprecated)
+
+Still works (logs only, same flat-key scheme), but new integrations should
+use `@bevingh/telemetry` above:
 
 ```javascript
 const LogShipper = require('./log-shipper');
@@ -403,7 +465,7 @@ gcloud run deploy central-logging-service \
   --platform managed \
   --region us-central1 \
   --allow-unauthenticated \
-  --set-env-vars MONGODB_URI=your-mongodb-uri,API_KEYS=your-keys
+  --set-env-vars MONGODB_URI=your-mongodb-uri,API_KEYS=your-keys,ADMIN_SETUP_TOKEN=your-admin-token
 ```
 
 ## Log Retention & Purging
@@ -469,8 +531,10 @@ Alias: `POST /jobs/archive` (same handler).
 
 ## Security
 
-- API key authentication for log submission (flat `API_KEYS` env list)
-- Per-app hashed API keys for metrics (`ApiKeyCandidate` + `@bevingh/auth` `matchApiKey`); route rejects `appId` ≠ authenticated subject
+- Unified, scoped API keys (`ApiKeyCandidate` + `@bevingh/auth` `matchApiKey`) for logs and metrics — bcrypt-hashed, individually revocable via `/admin/keys.html`, never stored in plaintext
+- Metrics routes additionally reject `appId` ≠ authenticated subject, so a leaked key can't post as a different app
+- Legacy flat `API_KEYS` env list still accepted as a migration-only fallback (`logs:read`/`logs:write`/`metrics:read`, never `metrics:write`) — see "Authentication" above
+- `/admin/keys` (provisioning) is guarded by a separate `ADMIN_SETUP_TOKEN` bearer, a higher trust tier than app-level keys
 - Rate limiting to prevent abuse
 - Input validation with Joi (`metrics` object left free-form by design)
 - Helmet.js security headers
