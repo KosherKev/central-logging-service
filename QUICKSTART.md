@@ -2,6 +2,11 @@
 
 Get the Central Logging Service running in 5 minutes.
 
+**Don't want to run anything locally?** Click the "Deploy to Render" button
+in `README.md` instead — paste a MongoDB URI, deploy, then skip straight to
+step 6 below once it's live. Everything from here through step 5 is the
+local/manual alternative.
+
 ## 1. Prerequisites
 
 - Node.js 18+ installed

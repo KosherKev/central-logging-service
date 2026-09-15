@@ -2,6 +2,21 @@
 
 A centralized logging service designed to collect, store, and analyze logs from multiple APIs deployed on Google Cloud Run.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/KosherKev/central-logging-service)
+
+Click the button, paste a MongoDB URI (free tier at
+[MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register) if you don't
+have one — everything else is auto-generated), and deploy. Once it's live,
+open `https://<your-service>.onrender.com/admin/keys.html` with the
+`ADMIN_SETUP_TOKEN` Render generated (find it in the service's Environment
+tab in the Render dashboard) to create your first API key — same flow as
+the local `npm run setup` path below, no terminal required. Render's free
+plan spins the service down after inactivity, so the first request after a
+while takes a few seconds to wake back up — not a bug, upgrade the plan if
+that matters for your use case.
+
+Prefer to run it yourself? See "Quick Start" below, or `QUICKSTART.md`.
+
 ## Features
 
 - 📊 **Structured JSON Logging** - Standard log format across all services

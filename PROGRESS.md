@@ -219,6 +219,18 @@ everywhere it was wired in (`.npmrc`, `Dockerfile`, `scripts/deploy.sh`,
 sandbox for the first time. Kevin re-ran the deploy and it succeeded, carrying
 CLS-12/CLS-13 with it.
 
+**0-phase26. One-click Render deploy (Phase 26) — built, not live-verified.**
+`render.yaml` + README/QUICKSTART updates landed
+(`logpulse_analytics/PHASE_26_SPEC.md` for full design). `render.yaml` was
+parsed with Python's `yaml` module to confirm structure, and
+`healthCheckPath: /health` confirmed against the real route in
+`src/routes/health.js` — but nobody has actually clicked the button on a
+real Render account yet. **Needs Kevin**: click "Deploy to Render" in
+`README.md`, confirm the form only asks for `MONGODB_URI`, confirm
+`/health` and `/admin/keys.html` both work on the resulting
+`*.onrender.com` URL, and that the auto-generated `ADMIN_SETUP_TOKEN`
+(Render dashboard → service → Environment tab) actually unlocks it.
+
 ~~**0-phase25. Deploy the unified API key auth (Phase 25, Part A).**~~ —
 **deployed and verified live 2026-09-14.** Sequence run: `migrate-scopes.js`
 against production Mongo (1 of 1 `ApiKeyCandidate` backfilled with
@@ -391,3 +403,22 @@ unilaterally:
   **Deployed and verified live 2026-09-14** — see Next Steps item 0-phase25
   for the rollout sequence and smoke-test results. Committed as `78f64f4`
   before deploy.
+- **2026-09-15 (Phase 26 — one-click Render deploy)** — Following up on the
+  Phase 25 onboarding-friction discussion, Kevin ruled out a shared
+  multi-tenant backend but wanted standing up an instance to need as little
+  terminal work as possible. Added `render.yaml` (Blueprint: Docker
+  runtime against the existing `Dockerfile`, `/health` as the health
+  check, every env var either hardcoded, `generateValue`-random, or —
+  `MONGODB_URI` only — `sync: false` to prompt the user) plus a "Deploy to
+  Render" badge in `README.md` and a pointer to it in `QUICKSTART.md`.
+  Render was chosen over Railway specifically because Render needs only
+  one config file reusing the Atlas-signup flow Phase 25 already built,
+  versus a multi-service Railway template with its own env-var-reference
+  dialect for the marginal gain of skipping one signup — see
+  `logpulse_analytics/PHASE_26_SPEC.md` Background for the full reasoning.
+  Verified: `render.yaml` parses cleanly (Python `yaml.safe_load`),
+  `healthCheckPath` matches the real route in `src/routes/health.js`,
+  `Dockerfile` unchanged (already `PORT`-aware and already has this exact
+  health check). **Not verified live** — this session has no Render
+  account; see Next Steps item 0-phase26 for what Kevin still needs to
+  click through and confirm.

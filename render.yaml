@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: central-logging-service
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Only field you have to type — paste a MongoDB Atlas connection
+      # string (free tier: https://www.mongodb.com/cloud/atlas/register).
+      - key: MONGODB_URI
+        sync: false
+      # Legacy fallback scheme only (Phase 25) — not required for real use,
+      # auto-generated so the field isn't left blank/insecure.
+      - key: API_KEYS
+        generateValue: true
+      # Guards /admin/keys.html (key provisioning UI) — find this value in
+      # this service's Environment tab in the Render dashboard after deploy.
+      - key: ADMIN_SETUP_TOKEN
+        generateValue: true
+      - key: HOT_STORAGE_DAYS
+        value: "7"
+      - key: COLD_STORAGE_DAYS
+        value: "90"
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "60000"
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "100"
