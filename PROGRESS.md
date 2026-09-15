@@ -219,25 +219,19 @@ everywhere it was wired in (`.npmrc`, `Dockerfile`, `scripts/deploy.sh`,
 sandbox for the first time. Kevin re-ran the deploy and it succeeded, carrying
 CLS-12/CLS-13 with it.
 
-**0-phase25. Deploy the unified API key auth (Phase 25, Part A).** Code-complete
-and test-verified in this sandbox (`npm test`: 68/68, all suites) — see
-`logpulse_analytics/PHASE_25_SPEC.md` for the full design. **Not deployed.**
-Before deploying:
-1. Run `node scripts/migrate-scopes.js` against production Mongo (backfills
-   `scopes: ['metrics:write']` on every existing `ApiKeyCandidate` row —
-   idempotent, safe to run more than once).
-2. Set `ADMIN_SETUP_TOKEN` in the production env (Cloud Run env var), or run
-   `npm run setup` once against production to generate one.
-3. Deploy. The legacy flat `API_KEYS` fallback means existing consumers
-   (LogPulse's current key, any producer using `client/log-shipper.js`) keep
-   working through the cutover with no forced flag day.
-4. Confirm who currently calls `GET /api/v1/metrics` with the flat key — this
-   phase tightened that route to require `metrics:read`, which the legacy
-   fallback does satisfy, so this should be a non-event, but worth confirming
-   live once deployed (Open Decision 1 in `PHASE_25_SPEC.md`).
-5. Once confirmed stable, issue LogPulse a real `logs:read` key via
-   `/admin/keys.html` and close out KL-2609-key on the LogPulse side (Part C
-   of the spec — that repo's `PROGRESS.md` Human pass queue).
+~~**0-phase25. Deploy the unified API key auth (Phase 25, Part A).**~~ —
+**deployed and verified live 2026-09-14.** Sequence run: `migrate-scopes.js`
+against production Mongo (1 of 1 `ApiKeyCandidate` backfilled with
+`scopes: ['metrics:write']`), `ADMIN_SETUP_TOKEN` set on the Cloud Run
+service, image rebuilt and deployed (revision `central-logging-service-00013-gtt`,
+europe-west1). Smoke-tested live: `/health` 200, legacy flat key still reads
+`/api/v1/logs` (confirms the fallback works, no forced flag day), `/admin/keys.html`
+reachable. No other known caller of `GET /api/v1/metrics` besides LogPulse
+(bevin-core's telemetry client isn't wired into any app yet), so Open Decision 1
+in `PHASE_25_SPEC.md` is a non-issue for now. A real `logs:read` key for
+`appId: logpulse` (environment `live`) was issued via `POST /admin/keys` —
+**LogPulse-side confirmation (Part C) still pending**, see that repo's
+`PROGRESS.md`.
 
 Per `LOG.md`'s dated backlog (the most trustworthy forward-looking source — items here
 have historically been worked in roughly this order):
@@ -290,9 +284,9 @@ unilaterally:
   **done**: Kevin ran the deploy, it succeeded, and he's confirmed both log
   search and the Dashboard time-range selector work against real production
   data. Nothing outstanding from this round of fixes.
-- **Deploy Phase 25 (unified API keys).** Run the migration script, set
-  `ADMIN_SETUP_TOKEN`, deploy, then issue real scoped keys — see Next Steps
-  item 0-phase25 above for the exact sequence. Not yet done.
+- ~~**Deploy Phase 25 (unified API keys).**~~ — **done 2026-09-14**, see Next
+  Steps item 0-phase25 above. LogPulse-side key confirmation (Part C) is the
+  one remaining piece, tracked in `logpulse_analytics/PROGRESS.md`.
 - **Decide when to remove the legacy flat-`API_KEYS` fallback** in
   `apiKeyAuth.js` — deliberately left open in `PHASE_25_SPEC.md` rather than
   scheduled, pending confirmation every real consumer holds a DB-backed key.
@@ -394,7 +388,6 @@ unilaterally:
   `QUICKSTART.md` throughout. **Verified**: `npm test` 68/68 passing (added
   `apiKeyAuth.test.js`, `apiKeyService.test.js`, `adminAuth.test.js`,
   `metricsAppScope.test.js`); all touched/new files pass `node --check`.
-  **Not deployed** — see Next Steps item 0-phase25 for the exact rollout
-  sequence (migration script → `ADMIN_SETUP_TOKEN` → deploy → confirm →
-  issue real keys). No commit yet — changes are in the working tree
-  pending Kevin's review before pushing/deploying.
+  **Deployed and verified live 2026-09-14** — see Next Steps item 0-phase25
+  for the rollout sequence and smoke-test results. Committed as `78f64f4`
+  before deploy.
