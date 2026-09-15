@@ -1,6 +1,14 @@
 # Central Logging Service
 
-A centralized logging service designed to collect, store, and analyze logs from multiple APIs deployed on Google Cloud Run.
+A centralized logging + metrics collector for your APIs — ship structured
+logs and health/metrics from one or more backend services, then query them
+back over a small REST API. Pairs with
+[LogPulse Analytics](https://github.com/KosherKev/logpulse_analytics), a
+Flutter dashboard app built specifically to read this API (Dashboard,
+Logs, Errors, and Services tabs) — point LogPulse at your deployed instance
+and a `logs:read` key and you have a working dashboard with no other setup.
+Runs anywhere that runs a Docker container or plain Node.js; not tied to
+any one cloud.
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/KosherKev/central-logging-service)
 
@@ -21,25 +29,23 @@ Prefer to run it yourself? See "Quick Start" below, or `QUICKSTART.md`.
 
 - 📊 **Structured JSON Logging** - Standard log format across all services
 - 📡 **Metrics / Health Ingestion** - `POST /api/v1/metrics` + `/health` for `@bevingh/telemetry` clients
-- 🔥 **Hot & Cold Storage** - MongoDB for recent logs, Google Cloud Storage for archives
+- 🔥 **Hot Storage with TTL Retention** - MongoDB holds `HOT_STORAGE_DAYS` of logs/metrics, then an explicit purge job (or a background TTL index) clears them. (Cold storage to Google Cloud Storage was designed early on and never built — see Known Limitations in `PROGRESS.md` if you're relying on this README, not just skimming it.)
 - 🚀 **Batch Processing** - Efficient log ingestion with batching support
 - 🔍 **Advanced Querying** - Filter by service, level, time range, trace ID
 - 🔐 **Unified, Scoped API Keys** - One per-app key type (`sk_live_`/`sk_test_`) authorizes logs and metrics, gated by scopes (`logs:read`, `logs:write`, `metrics:read`, `metrics:write`); provision via `/admin/keys.html` or `npm run setup`
 - 📈 **Analytics** - Error rates, performance metrics, aggregations
-- ☁️ **Cloud Run Ready** - Optimized for Google Cloud Run deployment
+- ☁️ **Deploy anywhere** - One-click on Render (see button above), or self-manage on Google Cloud Run / any Docker host
 
 ## Architecture
 
 ```
-Your APIs → Batch Logs → Logging Service (Cloud Run)
-                              ↓
-                    ┌─────────┴─────────┐
-                    ↓                   ↓
-              MongoDB (hot)    Google Cloud Storage (cold)
-                    ↓
-              Query API
-                    ↓
-              Dashboard App
+Your APIs → Batch Logs/Metrics → This Service (Render, Cloud Run, or any Docker host)
+                                          ↓
+                                  MongoDB (TTL retention)
+                                          ↓
+                                      Query API
+                                          ↓
+                              LogPulse Analytics (or your own dashboard)
 ```
 
 ## Quick Start
@@ -77,11 +83,12 @@ API_KEYS=your-api-key-1,your-api-key-2
 #   node -e "console.log('admin_' + require('crypto').randomBytes(24).toString('hex'))"
 ADMIN_SETUP_TOKEN=
 
-# Google Cloud Storage (optional)
+# Google Cloud Storage — NOT CURRENTLY FUNCTIONAL, see .env.example. Safe to leave unset.
 GCS_BUCKET_NAME=your-logging-bucket
 GCS_PROJECT_ID=your-project-id
 
-# Log / metrics retention (MongoDB TTL for both logs and metrics collections)
+# Log / metrics retention (MongoDB TTL). COLD_STORAGE_DAYS is likewise
+# unused today — see .env.example.
 HOT_STORAGE_DAYS=7
 COLD_STORAGE_DAYS=90
 ```

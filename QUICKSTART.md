@@ -16,7 +16,8 @@ local/manual alternative.
 ## 2. Clone and Install
 
 ```bash
-cd /Users/kevinafenyo/Documents/GitHub/central-logging-service
+git clone https://github.com/KosherKev/central-logging-service.git
+cd central-logging-service
 npm install
 ```
 
@@ -53,14 +54,10 @@ docker run -d -p 27017:27017 --name mongodb mongo:latest
 npm start
 ```
 
-You should see:
+You should see two log lines — one from Mongoose confirming the database
+connected, then:
 ```
-╔════════════════════════════════════════════════╗
-║   🚀 Central Logging Service                   ║
-║   📡 Server running on port 8080               ║
-║   🌍 Environment: development                  ║
-║   📊 MongoDB: Connected                        ║
-╚════════════════════════════════════════════════╝
+info: Central Logging Service started {"metadata":{"port":8080,"environment":"development"}}
 ```
 
 ## 6. Test the Service

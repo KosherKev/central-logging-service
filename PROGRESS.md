@@ -219,17 +219,50 @@ everywhere it was wired in (`.npmrc`, `Dockerfile`, `scripts/deploy.sh`,
 sandbox for the first time. Kevin re-ran the deploy and it succeeded, carrying
 CLS-12/CLS-13 with it.
 
-**0-phase26. One-click Render deploy (Phase 26) — built, not live-verified.**
-`render.yaml` + README/QUICKSTART updates landed
-(`logpulse_analytics/PHASE_26_SPEC.md` for full design). `render.yaml` was
-parsed with Python's `yaml` module to confirm structure, and
-`healthCheckPath: /health` confirmed against the real route in
-`src/routes/health.js` — but nobody has actually clicked the button on a
-real Render account yet. **Needs Kevin**: click "Deploy to Render" in
-`README.md`, confirm the form only asks for `MONGODB_URI`, confirm
-`/health` and `/admin/keys.html` both work on the resulting
-`*.onrender.com` URL, and that the auto-generated `ADMIN_SETUP_TOKEN`
-(Render dashboard → service → Environment tab) actually unlocks it.
+~~**0-phase26. One-click Render deploy (Phase 26).**~~ — **built and
+live-verified 2026-09-15.** Kevin clicked "Deploy to Render" for real: the
+form asked only for `MONGODB_URI`, deploy succeeded, and the resulting
+`*.onrender.com` instance worked end to end — confirmed. Full design in
+`logpulse_analytics/PHASE_26_SPEC.md`.
+
+**0-phase26b. Onboarding-doc smoothing pass (post-Phase-26) — done.**
+Fresh-eyes audit of the whole self-hoster path (`README.md`, `QUICKSTART.md`,
+`API_TESTING.md`, `DEPLOYMENT.md`) triggered by Kevin asking "anything else
+I'm missing?" after the Render test succeeded. Found and fixed real bugs,
+not just polish:
+- `QUICKSTART.md` had Kevin's own personal clone path hardcoded
+  (`cd /Users/kevinafenyo/...`) and an ASCII-art startup banner that has
+  never matched the actual log output (confirmed via `grep` — the banner
+  string exists nowhere in `src/`).
+- `README.md`/`DEPLOYMENT.md`/`.env.example` all still advertised GCS
+  cold-storage archival as a real feature — it was descoped the same day it
+  was designed (`PROGRESS.md` Decisions log, 2026-02-14) and
+  `GCS_BUCKET_NAME`/`GCS_PROJECT_ID`/`COLD_STORAGE_DAYS` are read nowhere in
+  `src/` (confirmed via `grep`). Marked NOT CURRENTLY FUNCTIONAL everywhere
+  it's mentioned rather than removing the vars outright (kept as
+  placeholders in case archival gets built later).
+- `DEPLOYMENT.md`'s manual Cloud Run env-var steps never included
+  `ADMIN_SETUP_TOKEN` at all — anyone following that doc literally would
+  deploy an instance with no way to reach `/admin/keys.html`. Added it, and
+  switched `--set-env-vars` to `--update-env-vars` (the former wipes
+  anything already set) to match `scripts/deploy.sh`'s own existing note.
+- `DEPLOYMENT.md`'s "Integrate with Your APIs" step still only showed the
+  deprecated `log-shipper.js` client; added `@bevingh/telemetry` as the
+  recommended path, matching what README/QUICKSTART already did in Phase 25.
+- `API_TESTING.md`'s `npm run generate-app-key -- academicx` example was
+  broken by Phase 25 — that CLI now requires `--scopes`, so this printed
+  usage and exited rather than working. Fixed, and rewrote the
+  "Authentication" section to describe the unified scope model instead of
+  the old flat-vs-per-app split (most of the doc's individual
+  `dev-key-123` examples were left as-is with one caveat sentence, rather
+  than rewriting ~500 lines of curl commands — they're still correct for
+  every route except the two `metrics:write` ones, which never accepted
+  flat keys before or after Phase 25).
+- Added a short "what is this / pairs with LogPulse Analytics" intro to
+  README's top — a cold visitor previously had no indication a companion
+  dashboard app exists at all.
+Verified: `npm test` still 68/68 (docs-only changes); all four edited docs'
+code-fence counts confirmed even (no broken Markdown).
 
 ~~**0-phase25. Deploy the unified API key auth (Phase 25, Part A).**~~ —
 **deployed and verified live 2026-09-14.** Sequence run: `migrate-scopes.js`

@@ -17,23 +17,30 @@ Production: https://your-service.run.app
 
 ## Authentication
 
-### Logs routes (`/api/v1/logs`)
+**Updated for the unified, scoped key model** — full explanation in
+`README.md`'s "Authentication" section; this is the short version needed to
+follow the examples below.
 
-Flat keys from the `API_KEYS` env var:
-
-```
-X-API-Key: your-api-key
-```
-
-### Metrics routes (`/api/v1/metrics`)
-
-Per-app keys (`sk_live_…` / `sk_test_…`) stored as bcrypt hashes in MongoDB (`ApiKeyCandidate`). Generate:
+One key type (`sk_live_…` / `sk_test_…`, bcrypt-hashed in MongoDB) now
+authorizes everything, gated by scope: `logs:read`, `logs:write`,
+`metrics:read`, `metrics:write`. Generate one via `/admin/keys.html` or:
 
 ```bash
-npm run generate-app-key -- academicx
+npm run generate-app-key -- academicx --scopes=logs:read,logs:write,metrics:write --live
 ```
 
-Use the printed raw key as `X-API-Key`. The key is bound to one `appId` (`subjectId`); posting a different `appId` returns **403**.
+(the `--scopes` flag is required now — a bare `npm run generate-app-key --
+academicx` prints usage and exits.) A key with `metrics:write` is bound to
+one `appId` (`subjectId`); posting a different `appId` to `/api/v1/metrics*`
+returns **403**.
+
+**Most examples below still use `X-API-Key: dev-key-123`** — that's the
+flat, comma-separated `API_KEYS` env value (see `.env.example`), kept as a
+migration-only fallback. It still works for everything **except**
+`POST /api/v1/metrics` and `POST /api/v1/metrics/health` (those two always
+need a real `metrics:write`-scoped key — the flat scheme never covered
+them, before or after this change). Fine for quickly testing the routes it
+does cover; for anything real, generate a scoped key as above.
 
 ---
 

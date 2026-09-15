@@ -2,6 +2,11 @@
 
 This guide walks through deploying the Central Logging Service to Google Cloud Run.
 
+**Want the fastest path instead?** `README.md` has a one-click "Deploy to
+Render" button — paste a MongoDB URI, done, no `gcloud`/Docker required.
+Keep reading here if you specifically want Cloud Run, or more control over
+the deploy than a one-click button gives you.
+
 ## Prerequisites
 
 - Google Cloud Platform account
@@ -26,7 +31,13 @@ This guide walks through deploying the Central Logging Service to Google Cloud R
 
 Ensure your MongoDB is accessible from Cloud Run with appropriate network configuration.
 
-## Step 2: Prepare Google Cloud Storage (Optional)
+## Step 2: Prepare Google Cloud Storage (Optional, NOT CURRENTLY FUNCTIONAL)
+
+**This step doesn't do anything today** — cold-storage archival to GCS was
+designed early in this project and descoped the same day; the retention job
+only ever deletes old logs from MongoDB, it never uploads them anywhere.
+`GCS_BUCKET_NAME`/`GCS_PROJECT_ID` are read nowhere in the codebase. Safe to
+skip this step entirely. Left here in case archival gets built later:
 
 For log archiving to GCS:
 
@@ -62,12 +73,20 @@ Create a `.env` file locally for testing:
 PORT=8080
 NODE_ENV=production
 MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/central-logging
+
+# Legacy fallback only — see README.md "Authentication". Real keys come
+# from /admin/keys.html once ADMIN_SETUP_TOKEN below is set.
 API_KEYS=your-secure-api-key-1,your-secure-api-key-2
-GCS_BUCKET_NAME=your-logging-bucket
-GCS_PROJECT_ID=your-project-id
+
+# Guards /admin/keys.html — generate with:
+#   node -e "console.log('admin_' + require('crypto').randomBytes(24).toString('hex'))"
+ADMIN_SETUP_TOKEN=
+
 HOT_STORAGE_DAYS=7
-COLD_STORAGE_DAYS=90
 ```
+
+(`GCS_BUCKET_NAME`/`GCS_PROJECT_ID`/`COLD_STORAGE_DAYS` omitted — see Step 2,
+not currently functional.)
 
 ## Step 4: Deploy to Cloud Run
 
@@ -109,13 +128,16 @@ chmod +x scripts/deploy.sh
 ```bash
 gcloud run services update central-logging-service \
   --region us-central1 \
-  --set-env-vars "NODE_ENV=production" \
-  --set-env-vars "PORT=8080" \
-  --set-env-vars "MONGODB_URI=your-mongodb-uri" \
-  --set-env-vars "API_KEYS=your-api-keys" \
-  --set-env-vars "GCS_BUCKET_NAME=your-bucket" \
-  --set-env-vars "GCS_PROJECT_ID=your-project-id"
+  --update-env-vars "NODE_ENV=production" \
+  --update-env-vars "PORT=8080" \
+  --update-env-vars "MONGODB_URI=your-mongodb-uri" \
+  --update-env-vars "API_KEYS=your-api-keys" \
+  --update-env-vars "ADMIN_SETUP_TOKEN=your-admin-token"
 ```
+
+Use `--update-env-vars` (not `--set-env-vars`, which wipes anything already
+set on the service) — same note as `scripts/deploy.sh`'s own output. Skip
+`GCS_BUCKET_NAME`/`GCS_PROJECT_ID` — see Step 2.
 
 Or use the script:
 ```bash
@@ -148,9 +170,15 @@ Expected response:
 }
 ```
 
-## Step 7: Set Up Log Archiving (Optional)
+## Step 7: Set Up Log Purging (Optional — "archiving" below is really deletion)
 
-Create a Cloud Scheduler job to run daily archiving:
+This job **deletes** logs older than `HOT_STORAGE_DAYS`, it doesn't archive
+them anywhere (see Step 2 — nothing uploads to GCS). `README.md`'s "Log
+Retention & Purging" section documents [cron-job.org](https://cron-job.org)
+as the path actually verified working end-to-end; Cloud Scheduler below is
+untested but should work the same way (same HTTP endpoint, same auth).
+
+Create a Cloud Scheduler job to run it daily:
 
 ```bash
 gcloud scheduler jobs create http archive-logs \
@@ -168,28 +196,31 @@ node src/jobs/archiveOldLogs.js
 
 ## Step 8: Integrate with Your APIs
 
-1. Copy the client library to your API projects:
-   ```bash
-   cp -r client/ ../your-api-project/
-   ```
+Recommended: `@bevingh/telemetry` — one client for logs, metrics, and
+health, under one scoped key (needs `logs:write` at least). See
+`README.md`'s "Client Integration" section for the full example.
 
-2. Install dependencies in your API:
-   ```bash
-   npm install node-fetch uuid
-   ```
+```bash
+npm install @bevingh/telemetry
+```
 
-3. Use the logger in your API:
-   ```javascript
-   const LogShipper = require('./client/log-shipper');
-   
-   const logger = new LogShipper({
-     serviceUrl: 'https://YOUR_SERVICE_URL',
-     apiKey: 'your-api-key',
-     serviceName: 'your-api-name'
-   });
-   
-   app.use(logger.middleware());
-   ```
+```javascript
+const { createTelemetryClient } = require('@bevingh/telemetry');
+const { createLogMiddleware } = require('@bevingh/telemetry/adapters/express');
+
+const telemetry = createTelemetryClient({
+  appId: 'your-api-name',
+  collectorUrl: 'https://YOUR_SERVICE_URL',
+  apiKey: 'your-api-key', // needs logs:write
+});
+
+app.use(createLogMiddleware({ client: telemetry }));
+```
+
+`client/log-shipper.js` (this repo, logs only, same flat-key scheme) still
+works but is deprecated — see `README.md`'s "Client Integration" section
+for its example if you need it, use `@bevingh/telemetry` above instead for
+anything new.
 
 ## Monitoring and Maintenance
 
@@ -217,7 +248,7 @@ After making code changes:
 ## Cost Optimization
 
 1. **Use minimum instances = 0** for cold start (free tier friendly)
-2. **Archive to GCS** regularly to reduce MongoDB costs
+2. **Set `HOT_STORAGE_DAYS`** and run the purge job (Step 7) to keep MongoDB from growing unbounded — GCS archival doesn't exist (see Step 2), so this is the only retention lever there is today
 3. **Set TTL on MongoDB** to auto-delete old logs
 4. **Batch logs** efficiently to reduce Cloud Run invocations
 
@@ -234,13 +265,13 @@ After making code changes:
 - Ensure Content-Type header is set to application/json
 
 ### High costs
-- Reduce log retention periods
-- Archive more frequently
+- Reduce `HOT_STORAGE_DAYS` and run the purge job more frequently
 - Implement sampling for high-volume services
 
 ## Security Best Practices
 
-1. **Rotate API keys** regularly
+1. **Rotate API keys** regularly — `/admin/keys.html`'s "Rotate" button
+   (or `POST /admin/keys/:appId/rotate`) does this without a redeploy
 2. **Use VPC connector** for private MongoDB access
 3. **Enable authentication** on Cloud Run (remove --allow-unauthenticated)
 4. **Audit access** regularly
