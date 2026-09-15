@@ -264,6 +264,35 @@ not just polish:
 Verified: `npm test` still 68/68 (docs-only changes); all four edited docs'
 code-fence counts confirmed even (no broken Markdown).
 
+**0-phase26c. Admin UI redesign + base-URL redirect — done.** Kevin's own
+words: "the Admin UI for that is bad, no lie, its the only hickup in this
+project currently." Redesigned `src/public/admin/keys.html`/`keys.js` to
+match LogPulse Analytics' actual "Neo-Terminal" design tokens — pulled the
+real values from that repo's `lib/core/theme/` (colors, Syne/Inter/
+JetBrains Mono fonts, border radius, spacing scale) rather than
+approximating, so this genuinely matches the companion app rather than
+just looking vaguely similar. Both light and dark variants implemented
+(`prefers-color-scheme`), plus a mobile card-layout fallback under 600px.
+Scope pills color-coded (logs = accent blue, metrics = success green,
+matching the app's log-level color-coding pattern), raw-key reveal now has
+a one-click copy button, Enter-to-unlock on the token field. Also: `GET /`
+now redirects browsers to `/admin/keys.html` (content-negotiated via
+`req.accepts(['json','html'])` so `curl`/tooling still gets the existing
+JSON endpoint map, unchanged) — addresses "have it redirect from the base
+API url for those new users who don't know exactly where to go." Added a
+help box on the unlock panel explaining where to find `ADMIN_SETUP_TOKEN`
+(Render Environment tab vs. self-hosted `.env`/`npm run setup`) —
+addresses "a short description of where to get the key from."
+**Verified live** against the real production Mongo (not just a diff
+review): started the local dev server pointed at production data, saw the
+real `logpulse`/`academicx` keys render correctly with their actual scopes/
+last-used timestamps, created and revoked a throwaway test key end-to-end
+through the redesigned UI, confirmed the CSP fix from the earlier admin-UI
+commit still holds (no console errors, `keys.js` loads), confirmed both
+light and dark themes and the mobile breakpoint render correctly. `npm
+test` 68/68 (no backend logic changed beyond the root-route redirect,
+which no test currently covers).
+
 ~~**0-phase25. Deploy the unified API key auth (Phase 25, Part A).**~~ —
 **deployed and verified live 2026-09-14.** Sequence run: `migrate-scopes.js`
 against production Mongo (1 of 1 `ApiKeyCandidate` backfilled with

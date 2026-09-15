@@ -7,7 +7,16 @@
     opts = opts || {};
     if (opts.text !== undefined) e.textContent = opts.text;
     if (opts.className) e.className = opts.className;
+    if (opts.attrs) {
+      Object.keys(opts.attrs).forEach(function (k) {
+        e.setAttribute(k, opts.attrs[k]);
+      });
+    }
     return e;
+  }
+
+  function scopePillClass(scope) {
+    return scope.indexOf('metrics:') === 0 ? 'pill scope-metrics' : 'pill scope-logs';
   }
 
   function authHeaders() {
@@ -27,35 +36,49 @@
 
   function renderKeys(rows) {
     var tbody = document.getElementById('keys-tbody');
+    var empty = document.getElementById('keys-empty');
     tbody.innerHTML = '';
+
+    if (!rows.length) {
+      empty.hidden = false;
+      return;
+    }
+    empty.hidden = true;
+
     rows.forEach(function (row) {
       var tr = el('tr');
       if (row.revoked) tr.className = 'revoked';
 
-      var appIdTd = el('td', { text: row.appId });
-      var labelTd = el('td', { text: row.label || '—' });
+      var appIdTd = el('td', { text: row.appId, className: 'appid', attrs: { 'data-label': 'App ID' } });
+      var labelTd = el('td', { text: row.label || '—', attrs: { 'data-label': 'Label' } });
 
-      var scopesTd = el('td', { className: 'scopes' });
+      var scopesTd = el('td', { attrs: { 'data-label': 'Scopes' } });
       (row.scopes || []).forEach(function (s) {
-        scopesTd.appendChild(el('span', { text: s }));
+        scopesTd.appendChild(el('span', { text: s, className: scopePillClass(s) }));
       });
 
-      var envsTd = el('td', { className: 'envs' });
+      var envsTd = el('td', { attrs: { 'data-label': 'Env' } });
       (row.environments || []).forEach(function (e) {
-        envsTd.appendChild(el('span', { text: e }));
+        envsTd.appendChild(el('span', { text: e, className: 'pill env' }));
       });
 
-      var lastUsedTd = el('td', { text: row.lastUsedAt ? new Date(row.lastUsedAt).toLocaleString() : 'never' });
-      var createdTd = el('td', { text: row.createdAt ? new Date(row.createdAt).toLocaleDateString() : '—' });
+      var lastUsedTd = el('td', {
+        text: row.lastUsedAt ? new Date(row.lastUsedAt).toLocaleString() : 'never',
+        attrs: { 'data-label': 'Last used' }
+      });
+      var createdTd = el('td', {
+        text: row.createdAt ? new Date(row.createdAt).toLocaleDateString() : '—',
+        attrs: { 'data-label': 'Created' }
+      });
 
-      var actionsTd = el('td', { className: 'row-actions' });
+      var actionsTd = el('td', { className: 'row-actions', attrs: { 'data-label': '' } });
       if (!row.revoked) {
         (row.environments || []).forEach(function (envName) {
           var rotateBtn = el('button', { text: 'Rotate ' + envName, className: 'secondary' });
           rotateBtn.addEventListener('click', function () { rotate(row.appId, envName); });
           actionsTd.appendChild(rotateBtn);
         });
-        var revokeBtn = el('button', { text: 'Revoke', className: 'secondary' });
+        var revokeBtn = el('button', { text: 'Revoke', className: 'secondary danger' });
         revokeBtn.addEventListener('click', function () { revoke(row.appId); });
         actionsTd.appendChild(revokeBtn);
       }
@@ -89,18 +112,35 @@
     await loadKeys();
   }
 
+  function copyToClipboard(text, btn) {
+    var restore = btn.textContent;
+    var done = function (ok) {
+      btn.textContent = ok ? 'Copied' : 'Copy failed';
+      setTimeout(function () { btn.textContent = restore; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+    } else {
+      done(false);
+    }
+  }
+
   function showRawKey(rawKeys) {
     var box = document.getElementById('raw-key-result');
     box.innerHTML = '';
     box.hidden = false;
-    var notice = el('p', { text: 'Copy now — this value will never be shown again.' });
-    notice.className = 'error';
-    box.appendChild(notice);
-    ['test', 'live'].forEach(function (env) {
-      if (rawKeys[env]) {
-        var line = el('div', { className: 'raw-key-box', text: env + ': ' + rawKeys[env] });
-        box.appendChild(line);
-      }
+    box.appendChild(el('p', { text: 'Copy now — this value will never be shown again.', className: 'raw-key-notice' }));
+    ['live', 'test'].forEach(function (env) {
+      if (!rawKeys[env]) return;
+      var row = el('div', { className: 'raw-key-row' });
+      row.appendChild(el('span', { text: env, className: 'env-tag' }));
+      var code = document.createElement('code');
+      code.textContent = rawKeys[env];
+      row.appendChild(code);
+      var copyBtn = el('button', { text: 'Copy', className: 'secondary' });
+      copyBtn.addEventListener('click', function () { copyToClipboard(rawKeys[env], copyBtn); });
+      row.appendChild(copyBtn);
+      box.appendChild(row);
     });
   }
 
@@ -149,6 +189,13 @@
       errorEl.textContent = err.message;
       errorEl.hidden = false;
       token = null;
+    }
+  });
+
+  document.getElementById('admin-token-input').addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      document.getElementById('unlock-btn').click();
     }
   });
 

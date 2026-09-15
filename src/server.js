@@ -46,8 +46,14 @@ app.use('/', healthRoutes);
 app.use('/admin/keys', adminKeysRoutes);
 app.use('/admin', express.static(path.join(__dirname, 'public', 'admin')));
 
-// Root endpoint
+// Root endpoint — browsers land on the admin UI (most new users have no
+// idea /admin/keys.html exists); anything else (curl, tooling) that isn't
+// explicitly asking for HTML still gets the JSON endpoint map, unchanged.
 app.get('/', (req, res) => {
+  if (req.accepts(['json', 'html']) === 'html') {
+    return res.redirect('/admin/keys.html');
+  }
+
   res.json({
     success: true,
     service: 'Central Logging Service',
