@@ -18,12 +18,16 @@
   now respects `timeRange`) were fixed, deployed, and confirmed live by Kevin —
   see Known Limitations and Changelog below. This is the current deployed state.
 - **Blocking issues**:
-  - **Docs badly out of sync with code.** `HANDOFF.md` (dated 2026-06-17) and
-    `PROJECT_SUMMARY.md` (dated 2026-02-14, never updated) both claim
-    "production-ready" / "zero test coverage" / a 6-route API surface — all stale.
-    Current repo has 6 test files under `tests/` and ~15 routes across 5 route files.
-    `README.md` and `API_TESTING.md` are the two docs actually kept current commit-by-
-    commit; treat those as the accurate source, not `HANDOFF.md`/`PROJECT_SUMMARY.md`.
+  - ~~**Docs badly out of sync with code.** `HANDOFF.md`/`PROJECT_SUMMARY.md`~~ —
+    **resolved 2026-09-15**: rather than refresh two docs nobody was keeping
+    current, both removed — from the working tree **and** from all git
+    history (`git filter-repo --path HANDOFF.md --path PROJECT_SUMMARY.md
+    --invert-paths`, force-pushed). `README.md` and `API_TESTING.md` remain
+    the two docs actually kept current commit-by-commit; treat those as the
+    accurate source going forward. **Every commit SHA in this repo
+    predating this entry changed** as a result — SHAs referenced elsewhere
+    in this ledger from before 2026-09-15 are accurate as historical
+    record, not as resolvable commit pointers.
   - **GCS "hot & cold storage" is advertised but not real.** `README.md` and
     `DEPLOYMENT.md` both describe Google Cloud Storage cold-archival. The archive job
     (`src/jobs/archiveOldLogs.js`) only deletes from MongoDB — it has never uploaded to
@@ -153,15 +157,16 @@ verified against the commits they describe), `docs/METRICS_READ_CONTRACT.md`, an
   `scripts/green-gate.sh` (matching LogPulse's) would report both as gaps on day one.
 - **CLS-07** — No CI workflow (`.github/workflows/` absent) — nothing runs `npm test`
   automatically on push.
-- **CLS-08** — `HANDOFF.md` and `PROJECT_SUMMARY.md` are stale by roughly 9 routes'
-  worth of API surface (everything metrics/services/error-groups/timeseries/purge-
-  related, all added after those docs were last touched). Anyone reading only those
-  two docs would believe the API is far smaller than it is. `README.md`/
-  `API_TESTING.md` are current and should be preferred.
+- ~~**CLS-08** — `HANDOFF.md`/`PROJECT_SUMMARY.md` stale by ~9 routes~~ —
+  **resolved 2026-09-15**: both files removed from the repo and its git
+  history (see Blocking issues above). `README.md`/`API_TESTING.md` remain
+  current and should be preferred.
 - **CLS-09** — `sortBy` query param on `GET /api/v1/logs` is passed through to
-  Mongoose `.sort()` without an allowlist (flagged in `HANDOFF.md` §9, not re-verified
-  against current `logs.js` in full this session — worth a direct check before
-  treating as resolved or not).
+  Mongoose `.sort()` without an allowlist (originally flagged in `HANDOFF.md`
+  §9, now removed — the finding itself is unaffected by that, but it can no
+  longer be traced back to that source; not re-verified against current
+  `logs.js` in full this session — worth a direct check before treating as
+  resolved or not).
 - **CLS-10** — `client/` (the log-shipper library used by producer apps) is a
   standalone folder with its own `package.json`, not published/versioned as an
   installable package — must be manually copied into each consuming app.
@@ -322,11 +327,15 @@ have historically been worked in roughly this order):
 5. **Process** — add a `scripts/green-gate.sh` (LogPulse already has one as of
    `842b0ca`; port the Node branch of that same script here) plus `lint`/`build`
    scripts in `package.json`, so this repo has the same one-command verification gate.
-6. **Docs cleanup** — collapse the GCS/Cloud-Scheduler narrative out of
-   `README.md`/`DEPLOYMENT.md`/`PROJECT_SUMMARY.md` in favor of the cron-job.org path
-   that's actually wired up, and refresh `HANDOFF.md`/`PROJECT_SUMMARY.md`'s stale
-   status claims (or fold their still-useful content into this ledger and mark them
-   historical, consistent with how LogPulse's ledger treats its own legacy docs).
+6. ~~**Docs cleanup**~~ — **done, by two different routes**: the GCS/Cloud-
+   Scheduler narrative in `README.md`/`DEPLOYMENT.md` was marked NOT
+   CURRENTLY FUNCTIONAL with the actual working cron-job.org path
+   cross-referenced (2026-09-15 onboarding-smoothing pass), rather than
+   removed outright — those docs still explain the job, just honestly.
+   `HANDOFF.md`/`PROJECT_SUMMARY.md` themselves were deleted entirely,
+   including from git history (same date, see Blocking issues/CLS-08
+   above) rather than refreshed — nobody was keeping them current, and
+   `README.md`/`API_TESTING.md` already cover the same ground accurately.
 
 ## Security observations (informational, 2026-09-14)
 
@@ -484,3 +493,20 @@ unilaterally:
   health check). **Not verified live** — this session has no Render
   account; see Next Steps item 0-phase26 for what Kevin still needs to
   click through and confirm.
+- **2026-09-15 (docs cleanup — history purge)** — Kevin: "remove the other
+  docs we have [flagged as] outdated from the git repo and from the
+  history, and push... I want to clean up the repositories." Clarified
+  scope first (destructive, needs a force-push, irreversible) — Kevin
+  selected `HANDOFF.md`/`PROJECT_SUMMARY.md` here plus `test_api.dart`/
+  `test_api_2.dart` in `logpulse_analytics` (see that repo's own
+  `PROGRESS.md`). Backed up `.git` first, then `git filter-repo --path
+  HANDOFF.md --path PROJECT_SUMMARY.md --invert-paths`, force-pushed.
+  Verified: neither path appears in `git log --all`, `npm test` still
+  68/68 (filter-repo only removes whole-file history for the targeted
+  paths, doesn't touch remaining file content). **Every commit SHA in this
+  repo predating this entry changed** — historical SHA references
+  elsewhere in this ledger are accurate as record of what was true when
+  written, not as resolvable commit pointers going forward. Did not touch
+  `DEPLOYMENT.md`'s still-live GCS/Cloud-Scheduler narrative beyond what
+  the 2026-09-15 onboarding-smoothing pass already fixed — Kevin's answer
+  named this specific file pair, not a broader doc audit.
