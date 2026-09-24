@@ -1,11 +1,10 @@
 const LogShipper = require('../client/log-shipper');
 
 // Initialize logger
-const logger = new LogShipper({
-  serviceUrl: process.env.LOGGING_SERVICE_URL || 'http://localhost:8080',
-  apiKey: process.env.LOGGING_API_KEY || 'dev-key-123',
-  serviceName: 'batch-processor'
-});
+// Collector URL + key come from the environment (TELEMETRY_COLLECTOR_URL /
+// TELEMETRY_API_KEY, or the legacy LOGGING_SERVICE_URL / LOGGING_API_KEY).
+// Unset = logging is a no-op. Entries are redacted before shipping.
+const logger = new LogShipper({ serviceName: 'batch-processor' });
 
 // Simulate a batch processing job
 async function processBatch(items) {

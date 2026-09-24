@@ -360,6 +360,17 @@ services this collector is ingesting from:
 
 ## Human pass queue
 
+- **(2026-09-24) Stored logs likely contain credentials.** `client/log-shipper.js` 1.x
+  (and `@bevingh/telemetry` 0.2.0's `createLogMiddleware`) shipped raw request headers,
+  request bodies and response bodies, and this service stores entries as-is with no
+  redaction. Producers that used either one have probably put bearer tokens, cookies,
+  API keys, passwords and issued access/refresh tokens into the `logs` collection:
+  AcademicX, pharma, and `_Modules/ussd-router` (a vendored 1.x copy at
+  `src/utils/log-shipper.js`). Kevin to decide: (1) purge or scrub `request.headers`,
+  `request.body` and `response.body` on existing log docs; (2) rotate the affected apps'
+  JWT secrets and API keys; (3) whether to add **server-side redaction at ingest**
+  (`POST /api/v1/logs`) as defense in depth, so a stale client can't leak again. Not done.
+
 Decisions this ledger surfaced that are Kevin's to make, not to be resolved
 unilaterally:
 
@@ -387,6 +398,36 @@ unilaterally:
   formally parked — no work has landed on either in ~8 weeks.
 
 ## Changelog
+
+- **2026-09-24 — `client/log-shipper.js` 2.0 (security fix).** 1.x's `middleware()`
+  shipped raw `req.headers`, `req.body` and the response body, and its SIGINT/SIGTERM
+  handlers called `process.exit(0)` from inside a library. Rewritten as a
+  legacy-compatible shim over `@bevingh/telemetry` ≥ 0.2.2. The `LogShipper` API is
+  unchanged (`log`/`info`/`warn`/`error`/`debug`/`flush`/`stop`/`middleware`,
+  `req.traceId`).
+  - **Redaction:** every entry, including manual `log()` calls, goes through
+    `redactLogEntry`: credential headers/keys, URL query params, JWTs. Bodies are off
+    unless `includeBodies: true`, and redacted even then. An entry that fails redaction
+    is dropped.
+  - **Config from env:** `TELEMETRY_COLLECTOR_URL`/`TELEMETRY_API_KEY`/`TELEMETRY_APP_ID`,
+    with the legacy `LOGGING_SERVICE_URL`/`LOGGING_API_KEY`/`SERVICE_NAME` still honored;
+    `LOG_SHIPPER_ENABLED`/`ENABLE_TELEMETRY=false` switches it off. No hard-coded
+    URL/key; unconfigured = no-op.
+  - **Other fixes:** non-schema fields such as `message`/`userId` now go into
+    `metadata` instead of being silently dropped. Shutdown hooks flush only.
+    `maxBatchSize` is accepted as an alias.
+  - **Dependencies:** `client/package.json` 2.0.0 drops `node-fetch`/`uuid` and depends
+    on `@bevingh/telemetry@^0.2.2`; the root gains it as a devDependency for
+    tests/examples. The examples are env-only (the `'dev-key-123'` fallbacks are gone).
+    `client/README.md` was rewritten; `README.md`/`QUICKSTART.md`/`DEPLOYMENT.md` were
+    updated.
+  - **Tests:** `tests/logShipper.test.js` (6), a real Express app plus a fake collector
+    over real HTTP: planted secrets never arrive, full path, traceId, bodies off by
+    default / redacted when on, env config (both name sets), disabled pass-through,
+    collector outage. Mutation-checked (skipping redaction fails a test). Full suite
+    **74/74**.
+  - **Not done:** existing stored logs, the vendored copy in `ussd-router`, and
+    ingest-side redaction (see Human pass queue).
 
 - **2026-09-14** — `ledger:` Bootstrapped `PROGRESS.md`, this repo's first ledger,
   consolidating `README.md`, `HANDOFF.md`, `PROJECT_SUMMARY.md`, `QUICKSTART.md`,

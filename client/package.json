@@ -1,7 +1,7 @@
 {
   "name": "@your-org/log-shipper",
-  "version": "1.0.0",
-  "description": "Client library for shipping logs to Central Logging Service",
+  "version": "2.0.0",
+  "description": "Legacy-compatible LogShipper for Central Logging Service \u2014 a redacting shim over @bevingh/telemetry",
   "main": "log-shipper.js",
   "keywords": [
     "logging",
@@ -11,7 +11,9 @@
   "author": "Techknowslogic",
   "license": "MIT",
   "dependencies": {
-    "node-fetch": "^2.7.0",
-    "uuid": "^9.0.1"
+    "@bevingh/telemetry": "^0.2.2"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

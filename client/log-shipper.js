@@ -1,235 +1,188 @@
-const fetch = require('node-fetch');
-const { v4: uuidv4 } = require('uuid');
-
 /**
- * LogShipper - Client library for shipping logs to Central Logging Service
+ * LogShipper — legacy-compatible client for shipping logs to Central Logging
+ * Service, now a thin shim over @bevingh/telemetry (≥ 0.2.2).
  *
- * DEPRECATED (Phase 25): superseded by @bevingh/telemetry's reportLog() /
- * createLogMiddleware() (bevin-core/packages/telemetry), which ported this
- * file's batching/retry/shutdown-hook behavior and adds it alongside
- * metrics/health reporting under one unified, scoped API key. This file
- * still works unmodified (same flat-key auth this service still accepts as
- * a legacy fallback) — kept in place rather than deleted per this repo's
- * "flag, don't silently remove" discipline, pending confirmation that
- * nothing in production still requires it (see PHASE_25_SPEC.md Part B,
- * Step 11). New integrations should use @bevingh/telemetry instead.
+ * SECURITY (2026-09-24): the previous implementation's middleware() shipped
+ * raw request headers (Authorization bearer tokens, cookies, API keys),
+ * request bodies (passwords) and response bodies (issued access/refresh
+ * tokens), and the collector stores entries as-is. Every entry now goes
+ * through @bevingh/telemetry's redaction before it leaves the process:
+ *   - credential headers → "[REDACTED]"
+ *   - credential-named keys at any depth → "[REDACTED]"
+ *   - sensitive URL query params → "[REDACTED]"
+ *   - JWT-shaped strings → "[REDACTED]"
+ *   - request/response bodies are NOT captured by middleware() unless
+ *     `includeBodies: true`, and are redacted even then
+ * Manual log()/info()/… calls are redacted too.
+ *
+ * New integrations should use @bevingh/telemetry directly (createTelemetryClient
+ * + createLogMiddleware). This file keeps the old LogShipper API so existing
+ * integrations can swap the file without code changes.
+ *
+ * Configuration: explicit options win, then environment:
+ *   serviceUrl   ← TELEMETRY_COLLECTOR_URL | LOGGING_SERVICE_URL
+ *   apiKey       ← TELEMETRY_API_KEY       | LOGGING_API_KEY      (needs logs:write)
+ *   serviceName  ← TELEMETRY_APP_ID        | SERVICE_NAME
+ *   enabled      ← LOG_SHIPPER_ENABLED / ENABLE_TELEMETRY ("false" disables)
+ * With no URL or no key it is a silent no-op (one warning), never a crash.
  *
  * Usage:
- * const LogShipper = require('./log-shipper');
- * const logger = new LogShipper({
- *   serviceUrl: 'https://your-logging-service.run.app',
- *   apiKey: 'your-api-key',
- *   serviceName: 'user-api'
- * });
+ *   const LogShipper = require('./log-shipper');
+ *   const logger = new LogShipper();                 // everything from env
+ *   app.use(logger.middleware());                    // redacted request logs
+ *   logger.info({ message: 'User logged in', userId: '123' });
  *
- * logger.log({ level: 'info', message: 'User logged in', ... });
+ * Requires Node ≥ 18 (global fetch, crypto.randomUUID) and
+ * `npm install @bevingh/telemetry@^0.2.2`.
  */
+
+const { randomUUID } = require('crypto');
+
+const TELEMETRY_MIN = '0.2.2';
+const MAX_PENDING = 10000;
+
+// Fields the collector's log schema accepts at top level; anything else a
+// caller passes (message, userId, …) is moved into metadata instead of being
+// dropped (old behavior) or failing the whole batch's validation.
+const TOP_LEVEL = new Set([
+  'timestamp', 'level', 'traceId', 'method', 'path', 'statusCode', 'duration',
+  'request', 'response', 'error', 'metadata',
+]);
+
+const firstSet = (...values) => values.find((v) => v !== undefined && v !== null && v !== '');
+
 class LogShipper {
   constructor(options = {}) {
-    this.serviceUrl = options.serviceUrl || 'http://localhost:8080';
-    this.apiKey = options.apiKey;
-    this.serviceName = options.serviceName || 'unknown-service';
-    this.batchSize = options.batchSize || 50;
-    this.flushInterval = options.flushInterval || 5000; // 5 seconds
-    this.enabled = options.enabled !== false;
-    
-    this.buffer = [];
-    this.timer = null;
-    this.flushing = false;
-    
-    if (!this.apiKey) {
-      console.warn('⚠️  LogShipper: No API key provided. Logging will fail.');
+    const env = process.env;
+    this.serviceUrl = String(firstSet(options.serviceUrl, env.TELEMETRY_COLLECTOR_URL, env.LOGGING_SERVICE_URL) || '').replace(/\/$/, '');
+    this.apiKey = firstSet(options.apiKey, env.TELEMETRY_API_KEY, env.LOGGING_API_KEY) || '';
+    this.serviceName = firstSet(options.serviceName, env.TELEMETRY_APP_ID, env.SERVICE_NAME) || 'unknown-service';
+    this.batchSize = Number(firstSet(options.batchSize, options.maxBatchSize)) || 50;
+    this.flushInterval = Number(options.flushInterval) || 5000;
+    this.middlewareOptions = {
+      includeBodies: options.includeBodies === true,
+      ...(options.redactHeaders ? { redactHeaders: options.redactHeaders } : {}),
+      ...(options.redactKeys ? { redactKeys: options.redactKeys } : {}),
+      ...(options.redact ? { redact: options.redact } : {}),
+    };
+
+    const envDisabled = env.LOG_SHIPPER_ENABLED === 'false' || env.ENABLE_TELEMETRY === 'false';
+    this.enabled = options.enabled !== false && !envDisabled;
+    if (this.enabled && (!this.serviceUrl || !this.apiKey)) {
+      console.warn('⚠️  LogShipper: no collector URL or API key (TELEMETRY_COLLECTOR_URL / TELEMETRY_API_KEY) — logging disabled.');
+      this.enabled = false;
     }
-    
-    // Start flush timer
-    this.startFlushTimer();
-    
-    // Flush on process exit
-    process.on('beforeExit', () => this.flush());
-    process.on('SIGINT', () => this.flush().then(() => process.exit(0)));
-    process.on('SIGTERM', () => this.flush().then(() => process.exit(0)));
+
+    this.pending = []; // entries logged before the ESM package finished loading
+    this.telemetry = null; // { client, redactLogEntry, createLogMiddleware }
+    this.ready = this.enabled ? this._load(options) : Promise.resolve(null);
   }
-  
+
+  /** @bevingh/telemetry is ESM-only, so it's loaded with import() from this CommonJS file. */
+  _load(options) {
+    return Promise.all([import('@bevingh/telemetry'), import('@bevingh/telemetry/adapters/express')])
+      .then(([core, adapter]) => {
+        if (typeof core.redactLogEntry !== 'function') {
+          throw new Error(`@bevingh/telemetry ≥ ${TELEMETRY_MIN} is required (this version cannot redact)`);
+        }
+        const client = core.createTelemetryClient({
+          appId: this.serviceName,
+          collectorUrl: this.serviceUrl,
+          apiKey: this.apiKey,
+          batchSize: this.batchSize,
+          flushIntervalMs: this.flushInterval,
+          // Flush-only shutdown hooks; unlike the old client this never calls process.exit().
+          installProcessHooks: options.installProcessHooks !== false,
+          onReportError: (err) => console.error('❌ LogShipper: failed to ship logs:', err && err.message ? err.message : String(err)),
+        });
+        this.telemetry = { client, redactLogEntry: core.redactLogEntry, createLogMiddleware: adapter.createLogMiddleware };
+        const queued = this.pending;
+        this.pending = [];
+        for (const entry of queued) this._ship(entry);
+        return this.telemetry;
+      })
+      .catch((err) => {
+        console.error(`❌ LogShipper: disabled — ${err.message}. Install @bevingh/telemetry@^${TELEMETRY_MIN}.`);
+        this.enabled = false;
+        this.pending = [];
+        return null;
+      });
+  }
+
+  _normalize(entry = {}) {
+    const out = { metadata: { ...(entry.metadata || {}) } };
+    for (const [key, value] of Object.entries(entry)) {
+      if (key === 'metadata' || value === undefined) continue;
+      if (key === 'service') continue; // always this shipper's serviceName
+      if (TOP_LEVEL.has(key)) out[key] = value;
+      else out.metadata[key] = value;
+    }
+    out.level = out.level || 'info';
+    out.traceId = out.traceId || randomUUID();
+    out.timestamp = out.timestamp || new Date().toISOString();
+    return out;
+  }
+
+  _ship(entry) {
+    const { client, redactLogEntry } = this.telemetry;
+    let safe;
+    try {
+      safe = redactLogEntry(entry, this.middlewareOptions);
+      if (this.middlewareOptions.redact) safe = this.middlewareOptions.redact(safe);
+    } catch {
+      return; // never ship an entry that couldn't be redacted
+    }
+    void client.reportLog(safe);
+  }
+
   /**
-   * Log an entry
-   * @param {Object} entry - Log entry object
+   * Log an entry. Unknown fields go into metadata. Redacted before shipping.
+   * @param {Object} entry
    */
   log(entry) {
     if (!this.enabled) return;
-    
-    const logEntry = {
-      timestamp: entry.timestamp || new Date().toISOString(),
-      level: entry.level || 'info',
-      service: this.serviceName,
-      traceId: entry.traceId || uuidv4(),
-      method: entry.method,
-      path: entry.path,
-      statusCode: entry.statusCode,
-      duration: entry.duration,
-      request: entry.request,
-      response: entry.response,
-      error: entry.error,
-      metadata: entry.metadata || {}
-    };
-    
-    this.buffer.push(logEntry);
-    
-    // Flush if batch size reached
-    if (this.buffer.length >= this.batchSize) {
-      this.flush();
-    }
+    const normalized = this._normalize(entry);
+    if (this.telemetry) return this._ship(normalized);
+    if (this.pending.length >= MAX_PENDING) this.pending.shift();
+    this.pending.push(normalized);
   }
-  
-  /**
-   * Convenience methods for different log levels
-   */
-  info(data) {
-    this.log({ ...data, level: 'info' });
-  }
-  
-  warn(data) {
-    this.log({ ...data, level: 'warn' });
-  }
-  
-  error(data) {
-    this.log({ ...data, level: 'error' });
-  }
-  
-  debug(data) {
-    this.log({ ...data, level: 'debug' });
-  }
-  
-  /**
-   * Flush buffer to logging service
-   */
+
+  info(data) { this.log({ ...data, level: 'info' }); }
+  warn(data) { this.log({ ...data, level: 'warn' }); }
+  error(data) { this.log({ ...data, level: 'error' }); }
+  debug(data) { this.log({ ...data, level: 'debug' }); }
+
+  /** Ship everything buffered now. Never rejects. */
   async flush() {
-    if (this.buffer.length === 0 || this.flushing) {
-      return;
-    }
-    
-    this.flushing = true;
-    const logs = [...this.buffer];
-    this.buffer = [];
-    
-    try {
-      const response = await fetch(`${this.serviceUrl}/api/v1/logs`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': this.apiKey
-        },
-        body: JSON.stringify({ logs }),
-        timeout: 10000
-      });
-      
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Failed to ship logs: ${response.status} - ${error}`);
-      }
-      
-      const result = await response.json();
-      console.log(`✅ LogShipper: Shipped ${result.count} logs`);
-      
-    } catch (error) {
-      console.error('❌ LogShipper: Failed to ship logs:', error.message);
-      
-      // On failure, put logs back in buffer to retry
-      this.buffer.unshift(...logs);
-      
-      // Limit buffer size to prevent memory issues
-      if (this.buffer.length > 10000) {
-        console.warn('⚠️  LogShipper: Buffer overflow, dropping oldest logs');
-        this.buffer = this.buffer.slice(-10000);
-      }
-    } finally {
-      this.flushing = false;
-    }
+    const t = await this.ready;
+    if (t) await t.client.flush();
   }
-  
-  /**
-   * Start periodic flush timer
-   */
-  startFlushTimer() {
-    if (this.timer) {
-      clearInterval(this.timer);
-    }
-    
-    this.timer = setInterval(() => {
-      this.flush();
-    }, this.flushInterval);
-    
-    // Don't keep process alive just for this timer
-    if (this.timer.unref) {
-      this.timer.unref();
-    }
+
+  /** Stop the background timer and flush once. Never rejects. */
+  async stop() {
+    const t = await this.ready;
+    if (t) await t.client.stop();
   }
-  
+
   /**
-   * Stop the flush timer
-   */
-  stop() {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
-    return this.flush();
-  }
-  
-  /**
-   * Express middleware for automatic request/response logging
+   * Express middleware for automatic request logging (redacted; no bodies
+   * unless `includeBodies: true`). Sets req.traceId from `x-trace-id` or a new
+   * UUID, and logs it with the entry, as before.
    */
   middleware() {
     return (req, res, next) => {
-      const start = Date.now();
-      const traceId = req.headers['x-trace-id'] || uuidv4();
-      
-      // Add trace ID to request for use in other middleware
+      const headerTrace = req.headers && req.headers['x-trace-id'];
+      const traceId = (typeof headerTrace === 'string' && headerTrace) || randomUUID();
       req.traceId = traceId;
-      
-      // Capture response
-      const originalSend = res.send;
-      let responseBody;
-      
-      res.send = function(data) {
-        responseBody = data;
-        originalSend.call(this, data);
-      };
-      
-      // Log when response finishes
-      res.on('finish', () => {
-        const duration = Date.now() - start;
-        
-        // Determine log level based on status code
-        let level = 'info';
-        if (res.statusCode >= 500) level = 'error';
-        else if (res.statusCode >= 400) level = 'warn';
-        
-        this.log({
-          level,
-          traceId,
-          method: req.method,
-          path: req.path,
-          statusCode: res.statusCode,
-          duration,
-          request: {
-            headers: req.headers,
-            body: req.body,
-            query: req.query,
-            ip: req.ip,
-            userAgent: req.get('user-agent')
-          },
-          response: {
-            body: responseBody
-          },
-          metadata: {
-            url: req.originalUrl,
-            protocol: req.protocol,
-            hostname: req.hostname
-          }
-        });
-      });
-      
-      next();
+      if (!this.enabled || !this.telemetry) return next();
+      try {
+        // Per-request adapter so the entry carries this request's traceId; the
+        // package middleware does the capture + redaction.
+        const client = { reportLog: (entry) => this.telemetry.client.reportLog({ ...entry, traceId }) };
+        return this.telemetry.createLogMiddleware({ client, ...this.middlewareOptions })(req, res, next);
+      } catch {
+        return next();
+      }
     };
   }
 }

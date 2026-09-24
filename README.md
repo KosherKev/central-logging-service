@@ -406,9 +406,13 @@ Per-service `errorRate` is percent 0–100; `avgDuration` is ms (LogPulse maps t
 
 ### Node.js Client Example — `@bevingh/telemetry` (recommended)
 
-One client, one unified key, for logs *and* metrics/health:
+One client, one unified key, for logs *and* metrics/health. Use **≥ 0.2.2**
+(0.2.0's `createLogMiddleware` shipped raw auth headers and bodies). The package
+is ESM-only: `import` it, or `require` it on Node ≥ 22.12, or use `await import()`
+from CommonJS on older Node.
 
 ```javascript
+// npm install @bevingh/telemetry@^0.2.2
 const { createTelemetryClient } = require('@bevingh/telemetry');
 const { createLogMiddleware } = require('@bevingh/telemetry/adapters/express');
 
@@ -421,46 +425,27 @@ const telemetry = createTelemetryClient({
 app.use(createLogMiddleware({ client: telemetry }));
 ```
 
-### Node.js Client Example — `client/log-shipper.js` (deprecated)
+### Node.js Client Example — `client/log-shipper.js` (legacy API, 2.0)
 
-Still works (logs only, same flat-key scheme), but new integrations should
-use `@bevingh/telemetry` above:
+**2.0 is a security fix:** 1.x's `middleware()` shipped raw auth headers,
+passwords and issued tokens to this service. 2.0 keeps the `LogShipper` API
+as a redacting shim over `@bevingh/telemetry` ≥ 0.2.2. It's configured from
+env (`TELEMETRY_COLLECTOR_URL`/`TELEMETRY_API_KEY`, or the legacy
+`LOGGING_SERVICE_URL`/`LOGGING_API_KEY`), ships no request/response bodies by
+default, and redacts everything else. Replace any vendored 1.x copy. New
+integrations should use `@bevingh/telemetry` above.
 
 ```javascript
+// npm install @bevingh/telemetry@^0.2.2
 const LogShipper = require('./log-shipper');
+const logger = new LogShipper({ serviceName: 'user-api' }); // URL + key from env
 
-const logger = new LogShipper({
-  serviceUrl: 'https://your-logging-service.run.app',
-  apiKey: 'your-api-key',
-  serviceName: 'user-api',
-  batchSize: 50,
-  flushInterval: 5000
-});
-
-// Log in your Express middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  const traceId = req.headers['x-trace-id'] || generateId();
-  
-  res.on('finish', () => {
-    logger.log({
-      level: res.statusCode >= 400 ? 'error' : 'info',
-      traceId,
-      method: req.method,
-      path: req.path,
-      statusCode: res.statusCode,
-      duration: Date.now() - start,
-      request: {
-        body: req.body,
-        query: req.query,
-        headers: req.headers
-      }
-    });
-  });
-  
-  next();
-});
+app.use(express.json());
+app.use(logger.middleware()); // redacted; sets req.traceId
+logger.info({ message: 'User logged in', userId: '123' }); // extra fields → metadata
 ```
+
+See `client/README.md` for the redaction rules and options.
 
 ## Deployment to Google Cloud Run
 

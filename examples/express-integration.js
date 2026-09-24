@@ -5,9 +5,11 @@ const app = express();
 app.use(express.json());
 
 // Initialize the log shipper
+// Collector URL + key come from the environment (TELEMETRY_COLLECTOR_URL /
+// TELEMETRY_API_KEY, or the legacy LOGGING_SERVICE_URL / LOGGING_API_KEY).
+// Unset = logging is a no-op. Credentials are redacted and bodies are not
+// shipped (pass includeBodies: true to opt in — still redacted).
 const logger = new LogShipper({
-  serviceUrl: process.env.LOGGING_SERVICE_URL || 'http://localhost:8080',
-  apiKey: process.env.LOGGING_API_KEY || 'dev-key-123',
   serviceName: 'user-api',
   batchSize: 50,
   flushInterval: 5000

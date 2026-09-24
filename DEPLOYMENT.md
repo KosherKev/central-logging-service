@@ -217,8 +217,9 @@ const telemetry = createTelemetryClient({
 app.use(createLogMiddleware({ client: telemetry }));
 ```
 
-`client/log-shipper.js` (this repo, logs only, same flat-key scheme) still
-works but is deprecated — see `README.md`'s "Client Integration" section
+`client/log-shipper.js` (this repo, 2.0: a redacting shim over
+`@bevingh/telemetry` ≥ 0.2.2, configured from env; 1.x leaked auth headers and bodies) still
+works but is legacy — see `README.md`'s "Client Integration" section
 for its example if you need it, use `@bevingh/telemetry` above instead for
 anything new.
 

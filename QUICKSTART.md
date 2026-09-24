@@ -103,9 +103,10 @@ health through one client and one unified key
 package's README). Provision its key with `logs:write` (+ `metrics:write`
 if it also reports metrics) via `/admin/keys.html` or `npm run generate-app-key`.
 
-`client/log-shipper.js` in this repo still works (logs only, same flat-key
-scheme as before) but is deprecated in favor of `@bevingh/telemetry` — see
-that file's header comment. If you're starting a new integration, use
+`client/log-shipper.js` in this repo (2.0) keeps the old `LogShipper` API as a
+redacting shim over `@bevingh/telemetry` ≥ 0.2.2, configured from env. 1.x
+shipped raw auth headers and bodies, so replace any vendored copy. See
+`client/README.md`. If you're starting a new integration, use
 `@bevingh/telemetry` instead:
 
 ```javascript
