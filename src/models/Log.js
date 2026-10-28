@@ -75,6 +75,8 @@ logSchema.index({ service: 1, timestamp: -1 });
 logSchema.index({ level: 1, timestamp: -1 });
 logSchema.index({ service: 1, level: 1, timestamp: -1 });
 logSchema.index({ archived: 1, timestamp: 1 });
+// Per-user lookups (GET /api/v1/logs?userId=...) match metadata.userId
+logSchema.index({ 'metadata.userId': 1, timestamp: -1 });
 
 // TTL index - auto-delete logs older than retention period
 // This will be set dynamically based on config

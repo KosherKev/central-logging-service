@@ -59,6 +59,23 @@ router.post('/', requireLogsWrite, rateLimit, validateLogBatch, async (req, res)
 });
 
 /**
+ * Optional per-user filter for GET /api/v1/logs (?userId=...).
+ * Matches metadata.userId exactly. Returns:
+ *   null   -> no filter requested
+ *   false  -> invalid value (caller should 400)
+ *   object -> a Mongo query fragment
+ * Only a plain string is accepted: Express's query parser turns
+ * `userId[$ne]=x` into an object, which must never reach Mongo.
+ */
+function buildUserFilter(userId) {
+  if (userId === undefined || userId === null || userId === '') return null;
+  if (typeof userId !== 'string') return false;
+  const trimmed = userId.trim();
+  if (!trimmed || trimmed.length > 128) return false;
+  return { 'metadata.userId': trimmed };
+}
+
+/**
  * @route   GET /api/v1/logs
  * @desc    Query logs with filters
  * @access  Private (API Key required)
@@ -71,6 +88,7 @@ router.get('/', requireLogsRead, async (req, res) => {
       from,
       to,
       traceId,
+      userId,
       statusCode,
       q,
       search,
@@ -92,6 +110,11 @@ router.get('/', requireLogsRead, async (req, res) => {
     if (level) query.level = level;
     if (traceId) query.traceId = traceId;
     if (statusCode) query.statusCode = parseInt(statusCode);
+    const userFilter = buildUserFilter(userId);
+    if (userFilter === false) {
+      return res.status(400).json({ success: false, error: 'Invalid userId' });
+    }
+    if (userFilter) Object.assign(query, userFilter);
     
     if (from || to) {
       query.timestamp = {};
@@ -657,3 +680,4 @@ module.exports.normalizeErrorMessage = normalizeErrorMessage;
 module.exports.fingerprintError = fingerprintError;
 module.exports.computeTrend = computeTrend;
 module.exports.extractErrorDisplay = extractErrorDisplay;
+module.exports.buildUserFilter = buildUserFilter;
